@@ -312,12 +312,90 @@ export interface CamadaJuridica {
   tabelas: Record<string, { decisao: "USE_TABLE" | "NO_TABLE"; itens: number; motivo: string }>;
   pendencias: string[];
   valor_da_causa: { valor?: number; pedidos_somados?: string[] };
+  canonico?: DadosCanonicos | null;
+  matriz_tese_fato_prova?: Array<{
+    tese_id: string;
+    tese: string;
+    decisao: DecisaoDeTese;
+    fatos: Array<{ id: string; estado: string; fato: string }>;
+    faltantes: string[];
+    provas: string[];
+    documentos: string[];
+    exige_pericia: boolean;
+  }>;
+  pedidos?: Array<{
+    request_id: string;
+    title: string;
+    factual_support: string[];
+    authority_ids: string[];
+    calculation_id: string;
+    value: number | null;
+    reflexes: string[];
+    expert_evidence_required: boolean;
+    status: "SUPPORTED" | "PENDING_CALCULATION" | string;
+  }>;
   auditoria: {
-    veredito: { pronta: boolean; auditores: Record<string, { status: "PASS" | "FAIL"; bloqueios: number; alertas: number }> };
+    veredito: {
+      pronta: boolean;
+      status?: "READY" | "BLOCKED";
+      auditores: Record<string, { status: "PASS" | "FAIL"; bloqueios: number; alertas: number }>;
+    };
     achados: Array<{ auditor: string; codigo: string; severidade: "bloqueia" | "alerta"; secao: string; trecho: string; detalhe: string }>;
     authority_ids: string[];
+    impressoes_digitais?: Array<{
+      chave: string;
+      esperado: string;
+      ocorrencias: Array<{ secao: string; area: string; trecho: string; ok: boolean }>;
+    }>;
   } | null;
-  citacoes: Array<{ trecho: string; chave: string; status: string; authority_id: string | null; motivo: string; secao: string }> | null;
+  citacoes: CitacaoConferida[] | null;
+}
+
+export type Certeza =
+  | "CONFIRMED"
+  | "INDICATED_BY_DOCUMENTS"
+  | "ALLEGED"
+  | "REQUIRES_EXPERT_CONFIRMATION"
+  | "INFERRED"
+  | "CONTRADICTED";
+
+export interface DadosCanonicos {
+  petition_date: string;
+  campos: Array<{
+    chave: string;
+    rotulo: string;
+    tipo: string;
+    valor: unknown;
+    exibicao: string;
+    certeza: Certeza;
+    rotulo_certeza: string;
+    fonte: string;
+    documento: string;
+    pagina?: string;
+    derivado: boolean;
+    calculation_id?: string;
+    versoes?: Array<{ valor: string; fontes: string[]; certeza: Certeza }>;
+  }>;
+  conflitos: Array<{ chave: string; versoes: Array<{ valor: string; fontes: string[] }> }>;
+  ausentes: string[];
+}
+
+export interface CitacaoConferida {
+  trecho: string;
+  chave: string;
+  status: string;
+  authority_id: string | null;
+  motivo: string;
+  secao: string;
+  versao?: string | null;
+  titulo?: string | null;
+  afirmacao?: string | null;
+  checks?: Partial<Record<"EXISTS" | "VALID_ON_DATE" | "NOT_SUPERSEDED" | "SUPPORTS_CLAIM", boolean | null>>;
+  classificacao?: string | null;
+  trecho_oficial?: string | null;
+  justificativa?: string | null;
+  sucessora?: { id: string; titulo: string } | null;
+  aprovada?: boolean | null;
 }
 
 export interface Hipotese {

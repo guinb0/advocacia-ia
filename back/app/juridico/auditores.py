@@ -141,6 +141,14 @@ def auditar_fatos(secoes: list[dict[str, Any]], matriz: dict[str, Any], *, calcu
 # ------------------------------------------------------------------ CALCULATION
 
 _VALOR_DA_CAUSA = re.compile(r"(?:valor\s+da\s+causa|d[áa][\s-]+se\s+[àa]\s+causa\s+o\s+valor)[^R]{0,80}(R\$\s*[\d.]+,\d{2})", re.I)
+#: Pedido sem valor líquido (art. 840, § 1º, da CLT): o rito trabalhista exige pedido certo, determinado e com valor.
+_ILIQUIDO = re.compile(
+    r"a\s+(?:ser(?:em)?\s+)?(?:apurad[oa]s?|liquidad[oa]s?|calculad[oa]s?)\s+em\s+(?:regular\s+)?liquida[çc][ãa]o|"
+    r"(?:valor|quantia|montante)\s+a\s+(?:ser\s+)?(?:apurad|liquidad|arbitrad)[oa]|\ba\s+liquidar\b|\ba\s+apurar\b|"
+    r"em\s+liquida[çc][ãa]o\s+de\s+senten[çc]a|por\s+(?:mero\s+)?c[áa]lculo\s+(?:em|na)\s+liquida[çc][ãa]o", re.I)
+#: Acessórios que, por natureza, se apuram na liquidação (não são pedido ilíquido).
+_ACESSORIO_DA_LIQUIDACAO = re.compile(r"juros|corre[çc][ãa]o\s+monet|atualiza[çc][ãa]o\s+monet|honor[áa]rios|previdenci|fiscais|imposto\s+de\s+renda|"
+                                      r"recolhimentos?|custas", re.I)
 
 
 def auditar_calculos(secoes: list[dict[str, Any]], pedidos: list[dict[str, Any]], calculos: list[dict[str, Any]]) -> dict[str, Any]:
@@ -162,16 +170,47 @@ def auditar_calculos(secoes: list[dict[str, Any]], pedidos: list[dict[str, Any]]
         permitidos.add(round(float(c.get("valor") or 0), 2))
         for linha in c.get("memoria") or []:
             permitidos |= set(_reais_do_texto(linha))
+        for f in (c.get("fontes") or {}).values():
+            if f.get("tipo") == "dinheiro" and f.get("valor") not in (None, ""):
+                permitidos.add(round(float(f["valor"]), 2))
     soma = calc.valor_da_causa(pedidos)["valor"]
     if soma:
         permitidos.add(round(soma, 2))
     claims = "\n".join(_texto(s) for s in secoes if str(s.get("code") or "") == "CLAIMS")
+    iliquidas: set[str] = set()
+    for m in _ILIQUIDO.finditer(claims):
+        inicio = max(claims.rfind("\n", 0, m.start()), 0)
+        fim = claims.find("\n", m.end())
+        linha = claims[inicio:fim if fim >= 0 else len(claims)].strip()
+        if linha in iliquidas or _ACESSORIO_DA_LIQUIDACAO.search(linha):
+            continue
+        iliquidas.add(linha)
+        achados.append(_achado("CALCULATION", "PEDIDO_ILIQUIDO", BLOQUEIA, "CLAIMS", linha,
+                               "pedido deixado para liquidação; todo pedido de pagamento leva valor certo e memória de cálculo discriminada"))
     for v in _reais_do_texto(claims):
         if v not in permitidos:
             achados.append(_achado("CALCULATION", "VALOR_SEM_CALCULO", BLOQUEIA, "CLAIMS", calc.brl(v), "valor nos pedidos sem cálculo determinístico correspondente"))
     for p in pedidos:
         if p.get("valor") not in (None, "") and calc.brl(p["valor"]) not in claims:
             achados.append(_achado("CALCULATION", "PEDIDO_SEM_VALOR_NO_TEXTO", ALERTA, "CLAIMS", p.get("objeto", "")[:120], f"valor calculado {calc.brl(p['valor'])} não aparece nos pedidos"))
+    usos: dict[str, list[str]] = {}
+    for p in pedidos:
+        cid = str(p.get("calculation_id") or "")
+        if not cid:
+            continue
+        somado = str(p.get("natureza") or "cumulativo") == "cumulativo" and str(p.get("tipo_de_item") or "autonomo") == "autonomo"
+        if somado:
+            usos.setdefault(cid, []).append(str(p.get("id") or ""))
+        c = calc.por_id(calculos, cid)
+        if c is None:
+            achados.append(_achado("CALCULATION", "PEDIDO_COM_CALCULO_INEXISTENTE", BLOQUEIA, "CLAIMS", str(p.get("id") or ""), f"o pedido aponta {cid}, que não existe"))
+        elif not c.get("erro") and p.get("valor") not in (None, "") and abs(float(p["valor"]) - float(c["valor"])) > 0.01:
+            achados.append(_achado("CALCULATION", "PEDIDO_DIVERGENTE_DO_CALCULO", BLOQUEIA, "CLAIMS", str(p.get("id") or ""),
+                                   f"pedido {calc.brl(p['valor'])} × {cid} {calc.brl(c['valor'])}"))
+    for cid, ids in usos.items():
+        if len(ids) > 1:
+            achados.append(_achado("CALCULATION", "DUPLA_CONTAGEM", BLOQUEIA, "VALUE", ", ".join(ids),
+                                   f"o mesmo cálculo {cid} entra na soma do valor da causa por {len(ids)} pedidos"))
     return {"auditor": "CALCULATION", "achados": achados, "valor_da_causa": calc.valor_da_causa(pedidos), "declarados": sorted(set(declarados))}
 
 
@@ -218,4 +257,5 @@ def veredito(*relatorios: dict[str, Any]) -> dict[str, Any]:
         bloqueios = [a for a in r["achados"] if a["severidade"] == BLOQUEIA]
         por_auditor[r["auditor"]] = {"status": "FAIL" if bloqueios else "PASS", "bloqueios": len(bloqueios),
                                      "alertas": len(r["achados"]) - len(bloqueios)}
-    return {"pronta": all(v["status"] == "PASS" for v in por_auditor.values()), "auditores": por_auditor}
+    pronta = all(v["status"] == "PASS" for v in por_auditor.values())
+    return {"pronta": pronta, "status": "READY" if pronta else "BLOCKED", "auditores": por_auditor}

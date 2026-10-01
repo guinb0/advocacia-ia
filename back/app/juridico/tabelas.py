@@ -6,7 +6,12 @@ jurídico. A preferência da skill (`preferir_tabelas`) sobrepõe o limiar.
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+from . import canonico
+from .autoridades import _data
+from .calculos import brl
 
 CATEGORIAS = ("contrato", "cronologia", "pagamentos", "descontos", "fgts", "jornada", "provas", "memoria_de_calculo")
 
@@ -49,3 +54,76 @@ def decidir(matriz: dict[str, Any], calculos: list[dict[str, Any]] | None = None
         motivo = "preferência da skill" if pref is not None else f"{contagem[c]} item(ns); limiar {LIMIARES[c]}"
         saida[c] = {"decisao": "USE_TABLE" if usa else "NO_TABLE", "itens": contagem[c], "motivo": motivo}
     return saida
+
+
+# ------------------------------------------------------------------ tabelas montadas pelo código
+
+#: Onde a redação quer uma tabela, escreve só o marcador; o conteúdo vem dos dados canônicos.
+MARCADOR = re.compile(r"\[\[\s*TABELA\s*:\s*([a-z_]+)\s*\]\]", re.I)
+
+
+def _celula(x: Any) -> str:
+    return " ".join(str(x if x is not None else "").replace("|", "/").split()) or "-"
+
+
+def _markdown(cabecalho: list[str], linhas: list[list[Any]]) -> str:
+    if not linhas:
+        return ""
+    saida = ["| " + " | ".join(cabecalho) + " |", "| " + " | ".join("---" for _ in cabecalho) + " |"]
+    saida += ["| " + " | ".join(_celula(c) for c in linha) + " |" for linha in linhas]
+    return "\n".join(saida)
+
+
+def _fonte(f: dict[str, Any]) -> str:
+    return f.get("documento") or f.get("fonte") or "-"
+
+
+def base_e_fonte(c: dict[str, Any]) -> str:
+    """Cada parâmetro do cálculo com o documento de onde saiu (fonte única) — o elo fato → pedido."""
+    fontes = c.get("fontes") or {}
+    partes = [f"{f['rotulo']}: {f['exibir']} ({f['fonte']})" for f in fontes.values() if f.get("exibir")]
+    if any(nome not in fontes for nome in c.get("parametros") or {}):
+        partes.append("demais parâmetros: análise do caso")
+    return "; ".join(partes) or "análise do caso"
+
+
+def construir(categoria: str, *, matriz: dict[str, Any], canon: dict[str, Any] | None, calculos: list[dict[str, Any]]) -> str:
+    """Tabela markdown de uma categoria, só com dado da fonte única (canônico, matriz utilizável, cálculos)."""
+    fatos = [f for f in matriz.get("fatos") or [] if canonico.certeza_do_fato(f) in canonico.UTILIZAVEIS]
+    if categoria == "contrato":
+        campos = [e for e in ((canon or {}).get("campos") or {}).values()
+                  if e["certeza"] in canonico.UTILIZAVEIS and e["chave"] != "petition_date" and e.get("valor") not in (None, "")]
+        return _markdown(["Dado", "Valor", "Fonte"], [[e["rotulo"], canonico.exibir(e), e.get("documento") or e.get("fonte")] for e in campos])
+    if categoria == "cronologia":
+        datados = sorted((f for f in fatos if _data(f.get("data"))), key=lambda f: _data(f.get("data")))
+        return _markdown(["Data", "Fato", "Fonte"], [[_data(f["data"]).strftime("%d/%m/%Y"), f["fato"][:200], _fonte(f)] for f in datados])
+    if categoria == "provas":
+        por_doc: dict[str, list[str]] = {}
+        for f in fatos:
+            for d in str(f.get("documento") or "").split(","):
+                if d.strip():
+                    por_doc.setdefault(d.strip(), []).append(f["id"])
+        return _markdown(["Documento", "Fatos que comprova"], [[d, ", ".join(ids)] for d, ids in sorted(por_doc.items())])
+    if categoria == "memoria_de_calculo":
+        validos = [c for c in calculos or [] if not c.get("erro") and c.get("valor") and str(c.get("unidade") or "BRL") == "BRL"]
+        return _markdown(["Cálculo", "Rubrica", "Base e fonte", "Memória", "Resultado"],
+                         [[c.get("calculation_id"), c["rubrica"].replace("_", " "), base_e_fonte(c), "; ".join(c.get("memoria") or []), brl(c["valor"])]
+                          for c in validos])
+    if categoria in CATEGORIAS:
+        itens = [f for f in fatos if _categoria(f) == categoria]
+        return _markdown(["Fato", "Valor", "Fonte"], [[f["fato"][:160], f.get("valor"), _fonte(f)] for f in itens])
+    return ""
+
+
+def aplicar_marcadores(texto: str, *, matriz: dict[str, Any], canon: dict[str, Any] | None,
+                       calculos: list[dict[str, Any]]) -> tuple[str, list[str], list[str]]:
+    """(texto com as tabelas do código, categorias renderizadas, marcadores sem dado — removidos)."""
+    feitas, vazias = [], []
+
+    def trocar(m: re.Match[str]) -> str:
+        cat = m[1].lower()
+        tabela = construir(cat, matriz=matriz, canon=canon, calculos=calculos)
+        (feitas if tabela else vazias).append(cat)
+        return tabela
+
+    return MARCADOR.sub(trocar, texto or ""), feitas, vazias

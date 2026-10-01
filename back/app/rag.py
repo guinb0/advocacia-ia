@@ -303,7 +303,7 @@ def buscar_legislacao(
         """SELECT k.texto, 1-(k.embedding <=> %s::vector) AS similaridade,
                   f.titulo,f.identificador,f.url,k.metadados
              FROM knowledge_chunks k JOIN fontes f ON f.id=k.fonte_id
-            WHERE k.embedding IS NOT NULL AND f.tipo='lei'
+            WHERE k.embedding IS NOT NULL AND f.tipo='lei' AND (k.metadados->>'invalidado_em') IS NULL
             ORDER BY k.embedding <=> %s::vector LIMIT %s""",
         (embedding, embedding, limite), connect_timeout=connect_timeout,
     )

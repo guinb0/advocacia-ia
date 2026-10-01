@@ -50,9 +50,12 @@ def _data(valor: Any) -> date | None:
     m = re.match(r"(\d{4})-(\d{2})-(\d{2})", s) or None
     if m:
         return date(int(m[1]), int(m[2]), int(m[3]))
-    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", s)
+    m = re.match(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", s)
     if m:
-        return date(int(m[3]), int(m[2]), int(m[1]))
+        try:
+            return date(int(m[3]), int(m[2]), int(m[1]))
+        except ValueError:
+            return None
     return None
 
 
@@ -131,6 +134,9 @@ def chave_da_norma(texto: str) -> str:
     for padrao, chave in _NORMAS:
         if re.search(rf"(?<![a-z])(?:{padrao})(?![a-z])", t):
             return chave
+    m = re.search(r"\bdecreto(?!-lei)\s*(?:n[ºo°.]*\s*)?(\d[\d.]*)", t)
+    if m:
+        return f"decreto{_digitos(m[1])}"
     m = lei.search(t)
     if m:
         return f"lei{_digitos(m[1])}"

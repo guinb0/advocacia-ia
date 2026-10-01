@@ -15,6 +15,7 @@ import {
   Activity,
   BarChart3,
   BookOpen,
+  BookOpenCheck,
   Bot,
   BriefcaseBusiness,
   ClipboardCheck,
@@ -269,6 +270,12 @@ const DEFINICOES = {
     rotulo: "Gastos das APIs",
     icone: Wallet,
     modulo: "gastos_api",
+    variante: "wide",
+  },
+  acervoJuridico: {
+    rotulo: "Acervo Jurídico",
+    icone: BookOpenCheck,
+    modulo: "acervo_juridico",
     variante: "wide",
   },
   /* O `chat` de propósito NÃO tem módulo — como `modelosDePeticao`.

@@ -190,6 +190,17 @@ MODULOS: tuple[dict[str, str], ...] = (
         "grupo": "Escritório",
         "ordem": 125,
     },
+    {
+        "codigo": "acervo_juridico",
+        "rotulo": "Acervo Jurídico",
+        "descricao": (
+            "Leis, súmulas e precedentes que a IA usa para fundamentar as peças: versão de "
+            "cada artigo, atualizações, embeddings e alertas."
+        ),
+        "rota": "acervoJuridico",
+        "grupo": "Escritório",
+        "ordem": 126,
+    },
 )
 CODIGOS_MODULOS = tuple(m["codigo"] for m in MODULOS)
 
@@ -205,7 +216,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "modulos": (
             "entrevista", "casos", "documentos", "operacao", "agente", "contratos",
             "investigacao", "usuarios", "roteiros", "revisao",
-            "glossario_documentos", "tipos_caso", "skills", "gastos_api",
+            "glossario_documentos", "tipos_caso", "skills", "gastos_api", "acervo_juridico",
         ),
     },
     {
@@ -222,6 +233,7 @@ SEMENTE: tuple[dict[str, Any], ...] = (
         "modulos": (
             "casos", "documentos", "supervisao", "metricas", "operacao", "agente", "usuarios",
             "roteiros", "revisao", "glossario_documentos", "tipos_caso", "skills", "gastos_api",
+            "acervo_juridico",
         ),
     },
     {

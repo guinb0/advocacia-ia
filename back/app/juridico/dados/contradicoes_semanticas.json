@@ -1,0 +1,49 @@
+{
+  "descricao": "Famílias genéricas de afirmações opostas. A peça que afirma os dois polos (fora de argumento subsidiário ou negação) se contradiz. Regex em Python, sem acento obrigatório; nenhuma família é de cliente ou de caso.",
+  "ressalvas_da_frase": [
+    "ainda\\s+que", "subsidiariamente", "caso\\s+(?:se\\s+entenda|assim\\s+n[ãa]o\\s+se\\s+entenda|v\\.?\\s*exa)", "n[ãa]o\\s+se\\s+trata",
+    "afasta-se", "ao\\s+contr[áa]rio\\s+do\\s+que", "(?:a\\s+)?(?:r[ée]|reclamada)\\s+(?:alega|sustenta|afirma)", "na\\s+hip[óo]tese\\s+de", "eventualmente"
+  ],
+  "familias": [
+    {
+      "id": "trajeto_x_servico",
+      "descricao": "o mesmo evento descrito como acidente de trajeto e como ocorrido em serviço",
+      "rotulo_a": "acidente de trajeto", "rotulo_b": "ocorrido em serviço/no local de trabalho",
+      "polo_a": ["acidente\\s+de\\s+trajeto", "in\\s+itinere", "no\\s+(?:trajeto|percurso)\\s+(?:de\\s+casa|entre\\s+(?:a\\s+)?resid[êe]ncia)"],
+      "polo_b": ["durante\\s+(?:a|o)\\s+(?:jornada|expediente|presta[çc][ãa]o\\s+de\\s+servi[çc]os?)", "no\\s+exerc[íi]cio\\s+(?:de\\s+suas|das)\\s+(?:fun[çc][õo]es|atividades)", "no\\s+local\\s+de\\s+trabalho", "nas\\s+depend[êe]ncias\\s+da\\s+(?:r[ée]|reclamada|empregadora)"],
+      "exceto_se_presente": []
+    },
+    {
+      "id": "definitiva_x_pericia",
+      "descricao": "incapacidade afirmada como definitiva e, ao mesmo tempo, a ser apurada em perícia",
+      "rotulo_a": "incapacidade definitiva afirmada", "rotulo_b": "incapacidade a ser apurada em perícia",
+      "polo_a": ["incapacidade\\s+(?:laborativa\\s+)?(?:total\\s+e\\s+)?(?:permanente|definitiva|irrevers[íi]vel)\\s+(?:[ée]|est[áa]|restou|foi)"],
+      "polo_b": ["(?:extens[ãa]o|grau|percentual)\\s+da\\s+incapacidade\\s+(?:ser[áa]|dever[áa]\\s+ser|a\\s+ser)\\s+apurad", "per[íi]cia\\s+(?:m[ée]dica\\s+)?(?:para|a\\s+fim\\s+de)\\s+(?:apurar|aferir|verificar|constatar)\\s+(?:a\\s+)?(?:incapacidade|extens[ãa]o)"],
+      "exceto_se_presente": []
+    },
+    {
+      "id": "ferias_gozadas_x_vencidas",
+      "descricao": "férias ditas regularmente gozadas e, também, vencidas ou não gozadas",
+      "rotulo_a": "férias gozadas", "rotulo_b": "férias vencidas/não gozadas",
+      "polo_a": ["f[ée]rias\\s+(?:foram\\s+)?(?:regularmente\\s+|integralmente\\s+)?(?:gozadas|usufru[íi]das|concedidas\\s+e\\s+pagas)"],
+      "polo_b": ["f[ée]rias\\s+(?:vencidas|n[ãa]o\\s+gozadas|nunca\\s+(?:gozadas|concedidas))", "jamais\\s+(?:gozou|usufruiu)\\s+(?:de\\s+)?f[ée]rias"],
+      "exceto_se_presente": ["parcialmente", "per[íi]odo\\s+aquisitivo\\s+\\d{4}"]
+    },
+    {
+      "id": "vinculo_ativo_x_extinto",
+      "descricao": "contrato dito vigente e, ao mesmo tempo, extinto por dispensa",
+      "rotulo_a": "vínculo ativo", "rotulo_b": "contrato extinto",
+      "polo_a": ["(?:v[íi]nculo|contrato(?:\\s+de\\s+trabalho)?)\\s+(?:permanece|continua|segue)\\s+(?:ativo|vigente|em\\s+curso)", "(?:ainda|segue)\\s+trabalhando\\s+para\\s+a\\s+(?:r[ée]|reclamada)"],
+      "polo_b": ["foi\\s+dispensad[oa]", "dispensa\\s+(?:sem\\s+justa\\s+causa\\s+)?ocorrida\\s+em", "ap[óo]s\\s+(?:a\\s+)?(?:dispensa|demiss[ãa]o|desligamento)", "contrato\\s+(?:foi\\s+)?(?:extinto|rescindido)\\s+em"],
+      "exceto_se_presente": ["rescis[ãa]o\\s+indireta"]
+    },
+    {
+      "id": "vinculo_ativo_x_verba_rescisoria",
+      "descricao": "contrato dito vigente e, ao mesmo tempo, pedido de verba que só existe com o contrato encerrado",
+      "rotulo_a": "vínculo ativo", "rotulo_b": "verba rescisória pedida",
+      "polo_a": ["(?:v[íi]nculo|contrato(?:\\s+de\\s+trabalho)?)\\s+(?:permanece|continua|segue)\\s+(?:ativo|vigente|em\\s+curso)", "(?:ainda|segue|continua|permanece)\\s+(?:trabalhando|laborando|prestando\\s+servi[çc]os)\\s+(?:para|na|junto)"],
+      "polo_b": ["multa\\s+(?:do|prevista\\s+no)\\s+(?:art\\.?|artigo)\\s*477", "atraso\\s+no\\s+pagamento\\s+das\\s+verbas\\s+rescis[óo]rias", "aviso\\s+pr[ée]vio\\s+indenizado", "multa\\s+(?:de|dos)\\s+40\\s*%\\s+(?:sobre|do)\\s+(?:o\\s+)?FGTS", "guias\\s+(?:do|para\\s+o)\\s+seguro[\\s-]+desemprego"],
+      "exceto_se_presente": ["rescis[ãa]o\\s+indireta"]
+    }
+  ]
+}

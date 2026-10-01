@@ -35,7 +35,7 @@ Só cogitar julgamento antecipado se a peça não requerer prova oral, pericial 
 
 ## IV. Do Benefício da Justiça Gratuita
 
-Requerer com base nos arts. 98 e 99 CPC, art. 790 §§3º e 4º CLT, Lei 7.115/83. Declarar hipossuficiência (Súmula 463, I, TST). Presunção de veracidade (CPC art. 99 §3º). Critério objetivo do art. 790 §3º CLT (remuneração ≤ 40% do teto do RGPS).
+Requerer com base nos arts. 98 e 99 CPC, art. 790 §§3º e 4º CLT e na ADC 80 do STF (julgada em 03/09/2026 — ver `precedentes_vinculantes.md`). Remuneração até R$ 5.000,00: presunção relativa de insuficiência, demonstrada com o salário do contracheque (mês e valor). Acima disso: demonstrar a insuficiência com os contracheques (descontos, consignados), despesas e renda familiar; a declaração de hipossuficiência é reforço, não prova única. Não citar a Súmula 463, I, do TST (declarada inconstitucional) nem o antigo critério percentual do teto previdenciário.
 
 ## V. Da Tempestividade
 
@@ -97,11 +97,13 @@ Não copie regime de juros/correção deste modelo. Identifique a natureza da re
 a) Recebimento e processamento sob o rito [ordinário/sumaríssimo, conforme o caso];
 b) Citação da reclamada via sistema (PJe), sob pena de revelia e confissão (art. 344 CPC c/c art. 847 CLT);
 c) Condenação ao pagamento de indenização por danos morais, com valor estimativo fundamentado no art. 223-G, §1º, CLT;
-d) Concessão da Justiça Gratuita (art. 5º, LXXIV, CF; art. 790, §3º, CLT);
+d) Concessão da Justiça Gratuita (art. 5º, LXXIV, CF; art. 790, §§ 3º e 4º, CLT; ADC 80 do STF);
 e) Condenação em honorários sucumbenciais de 15%;
 f) Aplicação de juros/correção conforme item de juros e correção;
 g) Produção de todas as provas em direito admitidas;
 h) Procedência integral dos pedidos.
+
+Memória de cálculo: obrigatória, logo após os pedidos, em tabela (Pedido | Base e documento | Período/quantidade | Conta | Resultado), uma linha por parcela; nenhum pedido de pagamento "a apurar em liquidação".
 
 Valor da causa: somar os pedidos líquidos. A base remuneratória, multiplicador e memória de cálculo devem vir dos contracheques e da estratégia aprovada pela advogada; não use piso nem valor aproximado pré-fixado pelo modelo.
 

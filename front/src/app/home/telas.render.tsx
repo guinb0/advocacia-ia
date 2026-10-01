@@ -31,6 +31,7 @@ import TriagemEntrevista from "@/components/entrevista/TriagemEntrevista";
 import Supervisao from "@/components/admin/Supervisao";
 import SaudeAgente from "@/components/SaudeAgente";
 import PainelGastosApi from "@/components/admin/PainelGastosApi";
+import AcervoJuridico from "@/components/admin/AcervoJuridico";
 import ModelosDePeticao from "@/components/ModelosDePeticao";
 import ConfiguracaoAssinatura from "@/components/admin/ConfiguracaoAssinatura";
 import FollowUp from "@/components/admin/FollowUp";
@@ -106,6 +107,7 @@ export const DESENHO_DA_TELA: Record<Tela, DesenhoTela> = {
   operacao: () => <Operacao />,
   saudeAgente: (c) => <SaudeAgente onVoltar={c.voltarParaCarteira} />,
   gastosApi: (c) => <PainelGastosApi onVoltar={c.voltarParaCarteira} />,
+  acervoJuridico: (c) => <AcervoJuridico onVoltar={c.voltarParaCarteira} />,
   revisao: (c) => <Supervisao onVoltar={c.voltarParaCarteira} />,
   followup: () => <FollowUp />,
   pecasProtocoladas: (c) => <PecasProtocoladas onAbrirDossie={c.abrirDossie} />,

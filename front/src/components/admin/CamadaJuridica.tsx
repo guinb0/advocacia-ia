@@ -17,7 +17,40 @@ const ROTULO_ESTADO: Record<string, string> = {
   inferido: "inferido (sem fonte)",
 };
 
+const ROTULO_GATE: Record<string, string> = {
+  LEGAL: "Base legal",
+  FACT: "Fatos",
+  CALCULATION: "Cálculos",
+  CONSISTENCY: "Consistência",
+  TEMPORAL: "Datas",
+  FACT_CERTAINTY: "Certeza dos fatos",
+  SEMANTIC_CONTRADICTION: "Contradição semântica",
+  CITATION_GATE: "Citações",
+  CROSS_SECTION: "Entre seções",
+};
+
+const ROTULO_CHECK: Record<string, string> = {
+  EXISTS: "existe",
+  VALID_ON_DATE: "vigente na data",
+  NOT_SUPERSEDED: "não superada",
+  SUPPORTS_CLAIM: "sustenta a afirmação",
+};
+
 const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+function linkDoAcervo(authorityId: string): string {
+  return `/home?tela=acervoJuridico&autoridade=${encodeURIComponent(authorityId)}`;
+}
+
+function Check({ nome, valor }: { nome: string; valor: boolean | null | undefined }) {
+  const texto = valor === true ? "ok" : valor === false ? "falhou" : "não verificado";
+  const cor = valor === true ? "border-borda" : valor === false ? "border-red-400" : "border-amber-400";
+  return (
+    <span className={`px-1.5 py-0.5 border text-xs ${cor}`}>
+      {ROTULO_CHECK[nome] ?? nome}: {texto}
+    </span>
+  );
+}
 
 function Bloco({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
@@ -69,7 +102,7 @@ function CartaoTeseNaoIncluida({ tese, autoridades }: { tese: Tese; autoridades:
   );
 }
 
-/** Como a peça foi montada: teses consideradas, base jurídica, cálculos e o resultado dos quatro auditores. */
+/** Como a peça foi montada: teses consideradas, fonte única, base jurídica, cálculos e o resultado de cada gate. */
 export function CamadaJuridica({ dados }: { dados: Dados }) {
   const [aberto, setAberto] = useState(false);
   const veredito = dados.auditoria?.veredito;
@@ -81,12 +114,21 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
   const sombra = dados.modo === "shadow";
   const comparacao = dados.comparacao_com_legado;
 
+  const canonico = dados.canonico;
+  const pedidos = dados.pedidos ?? [];
+  const matriz = dados.matriz_tese_fato_prova ?? [];
+  const divergencias = (dados.auditoria?.impressoes_digitais ?? []).filter((i) => i.ocorrencias.some((o) => !o.ok));
+  const bloqueiosPorGate = bloqueios.reduce<Record<string, typeof bloqueios>>((acc, a) => {
+    (acc[a.auditor] ??= []).push(a);
+    return acc;
+  }, {});
+
   const resumo = falhas.length
     ? `${falhas.length} falha(s) da camada`
     : veredito
       ? veredito.pronta
-        ? "pronta"
-        : `${bloqueios.length} bloqueio(s)`
+        ? "READY"
+        : `BLOCKED · ${bloqueios.length} bloqueio(s)`
       : "não executada";
 
   return (
@@ -147,11 +189,13 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
           )}
 
           {veredito && (
-            <Bloco titulo={`Auditores (referência ${dados.data_referencia})`}>
+            <Bloco
+              titulo={`Gates — ${veredito.status ?? (veredito.pronta ? "READY" : "BLOCKED")} (data da petição ${dados.data_referencia})`}
+            >
               <ul className="m-0 p-0 list-none flex flex-wrap gap-2">
                 {Object.entries(veredito.auditores).map(([nome, a]) => (
                   <li key={nome} className={`px-2 py-0.5 border ${a.status === "PASS" ? "border-borda" : "border-red-400"}`}>
-                    {nome}: {a.status === "PASS" ? "passou" : `falhou (${a.bloqueios})`}
+                    {ROTULO_GATE[nome] ?? nome}: {a.status === "PASS" ? "passou" : `bloqueou (${a.bloqueios})`}
                     {a.alertas > 0 && ` · ${a.alertas} alerta(s)`}
                   </li>
                 ))}
@@ -161,10 +205,87 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
 
           {bloqueios.length > 0 && (
             <Bloco titulo={sombra ? "O que o modo strict bloquearia" : "O que impede a peça de ficar pronta"}>
+              {Object.entries(bloqueiosPorGate).map(([gate, lista]) => (
+                <div key={gate}>
+                  <span className="text-xs font-semibold text-tinta-3">{ROTULO_GATE[gate] ?? gate}</span>
+                  <ul className="m-0 pl-4">
+                    {lista.map((a, i) => (
+                      <li key={i}>
+                        <strong>{a.codigo}</strong>
+                        {a.secao && <span className="text-tinta-3"> [{a.secao}]</span>} {a.trecho && <>«{a.trecho}»</>}{" "}
+                        {a.detalhe && <span className="text-tinta-3">— {a.detalhe}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </Bloco>
+          )}
+
+          {canonico && canonico.campos.length > 0 && (
+            <Bloco titulo={`Dados canônicos (fonte única · petição em ${canonico.petition_date})`}>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="text-left text-tinta-3">
+                      <th className="pr-2 font-medium">Campo</th>
+                      <th className="pr-2 font-medium">Valor</th>
+                      <th className="pr-2 font-medium">Certeza</th>
+                      <th className="font-medium">Origem</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {canonico.campos.map((c) => (
+                      <tr key={c.chave} className="border-t border-borda align-top">
+                        <td className="pr-2">
+                          {c.rotulo} <code className="text-tinta-3">{c.chave}</code>
+                        </td>
+                        <td className="pr-2">
+                          {c.certeza === "CONTRADICTED"
+                            ? (c.versoes ?? []).map((v) => `«${v.valor}» (${v.fontes.join(", ")})`).join(" × ")
+                            : c.exibicao}
+                        </td>
+                        <td className={`pr-2 ${c.certeza === "CONTRADICTED" || c.certeza === "INFERRED" ? "text-red-700" : ""}`}>
+                          {c.rotulo_certeza}
+                        </td>
+                        <td className="text-tinta-3">
+                          {c.calculation_id ? `calculado (${c.calculation_id})` : c.documento || c.fonte || "—"}
+                          {c.pagina && `, p. ${c.pagina}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {canonico.ausentes.length > 0 && (
+                <p className="m-0 text-xs text-tinta-3">Sem dado no caso: {canonico.ausentes.join(", ")}</p>
+              )}
+            </Bloco>
+          )}
+
+          {dados.contradicoes.length > 0 && (
+            <Bloco titulo={`Contradições entre fontes (${dados.contradicoes.length})`}>
               <ul className="m-0 pl-4">
-                {bloqueios.map((a, i) => (
-                  <li key={i}>
-                    <strong>{a.codigo}</strong> {a.trecho && <>«{a.trecho}»</>} {a.detalhe && <span className="text-tinta-3">— {a.detalhe}</span>}
+                {dados.contradicoes.map((c) => (
+                  <li key={c.id}>
+                    <code>{c.chave}</code>:{" "}
+                    {c.versoes.map((v) => `«${v.valor ?? v.detalhe ?? ""}»${v.fontes?.length ? ` (${v.fontes.join(", ")})` : ""}`).join(" × ")}
+                  </li>
+                ))}
+              </ul>
+            </Bloco>
+          )}
+
+          {divergencias.length > 0 && (
+            <Bloco titulo="Divergências entre seções">
+              <ul className="m-0 pl-4">
+                {divergencias.map((d) => (
+                  <li key={d.chave}>
+                    <code>{d.chave}</code> esperado {d.esperado}:{" "}
+                    {d.ocorrencias
+                      .filter((o) => !o.ok)
+                      .map((o) => `${o.secao} «${o.trecho}»`)
+                      .join("; ")}
                   </li>
                 ))}
               </ul>
@@ -218,6 +339,55 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
             <p className="m-0 text-xs text-tinta-3">Itens do catálogo não avaliados: {dados.nao_avaliadas.join("; ")}</p>
           )}
 
+          {matriz.length > 0 && (
+            <Bloco titulo="Matriz tese × fato × prova">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="text-left text-tinta-3">
+                      <th className="pr-2 font-medium">Tese</th>
+                      <th className="pr-2 font-medium">Fatos que sustentam</th>
+                      <th className="pr-2 font-medium">Faltam</th>
+                      <th className="font-medium">Provas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {matriz.map((m) => (
+                      <tr key={m.tese_id} className="border-t border-borda align-top">
+                        <td className="pr-2">
+                          {m.tese} <span className="text-tinta-3">({ROTULO_DECISAO[m.decisao] ?? m.decisao})</span>
+                        </td>
+                        <td className="pr-2">{m.fatos.map((f) => `${f.fato} (${ROTULO_ESTADO[f.estado] ?? f.estado})`).join("; ") || "—"}</td>
+                        <td className="pr-2">{m.faltantes.join("; ") || "—"}</td>
+                        <td>
+                          {[...m.provas, ...m.documentos].join("; ") || "—"}
+                          {m.exige_pericia && " · perícia"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Bloco>
+          )}
+
+          {pedidos.length > 0 && (
+            <Bloco titulo={`Pedidos estruturados (${pedidos.length})`}>
+              <ul className="m-0 pl-4">
+                {pedidos.map((p) => (
+                  <li key={p.request_id}>
+                    <code>{p.request_id}</code> {p.title}
+                    {p.value != null && ` — ${brl(p.value)}`}
+                    {p.calculation_id && <span className="text-tinta-3"> ({p.calculation_id})</span>}
+                    {p.status !== "SUPPORTED" && <strong> · {p.status === "PENDING_CALCULATION" ? "cálculo pendente" : p.status}</strong>}
+                    {p.expert_evidence_required && " · perícia"}
+                    {p.reflexes.length > 0 && <span className="text-tinta-3"> · reflexos: {p.reflexes.join(", ")}</span>}
+                  </li>
+                ))}
+              </ul>
+            </Bloco>
+          )}
+
           {dados.calculos.length > 0 && (
             <Bloco titulo="Cálculos">
               <ul className="m-0 pl-4">
@@ -251,11 +421,39 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
 
           {(dados.citacoes ?? []).length > 0 && (
             <Bloco titulo="Citações conferidas">
-              <ul className="m-0 pl-4">
+              <ul className="m-0 p-0 grid gap-2 list-none">
                 {(dados.citacoes ?? []).map((c, i) => (
-                  <li key={i}>
-                    {c.trecho} — <strong>{c.status}</strong>
-                    {c.authority_id && <span className="text-tinta-3"> [{c.authority_id}]</span>}
+                  <li key={i} className="grid gap-1 border border-borda p-2">
+                    <span>
+                      {c.trecho} — <strong>{c.classificacao ?? c.status}</strong>
+                      {c.authority_id && (
+                        <>
+                          {" · "}
+                          <a href={linkDoAcervo(c.authority_id)} target="_blank" rel="noreferrer" className="underline">
+                            {c.titulo || c.authority_id}
+                            {c.versao && ` (versão ${c.versao})`}
+                          </a>
+                        </>
+                      )}
+                    </span>
+                    {c.checks && (
+                      <span className="flex flex-wrap gap-1">
+                        {(["EXISTS", "VALID_ON_DATE", "NOT_SUPERSEDED", "SUPPORTS_CLAIM"] as const).map((k) => (
+                          <Check key={k} nome={k} valor={c.checks?.[k]} />
+                        ))}
+                      </span>
+                    )}
+                    {c.afirmacao && <span className="text-xs text-tinta-3">Afirmação: {c.afirmacao}</span>}
+                    {c.trecho_oficial && <span className="text-xs text-tinta-3">Texto oficial: «{c.trecho_oficial}»</span>}
+                    {c.sucessora && (
+                      <span className="text-xs">
+                        Superada por:{" "}
+                        <a href={linkDoAcervo(c.sucessora.id)} target="_blank" rel="noreferrer" className="underline">
+                          {c.sucessora.titulo}
+                        </a>
+                      </span>
+                    )}
+                    {c.motivo && <span className="text-xs text-tinta-3">{c.motivo}</span>}
                   </li>
                 ))}
               </ul>

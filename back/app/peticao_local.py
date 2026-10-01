@@ -53,7 +53,10 @@ from . import (
 )
 from . import casos as casos_ocr
 from . import juridico
+from .juridico import atualizacao as juridico_atualizacao
+from .juridico import autoridades as juridico_aut
 from .juridico import orquestrador as juridico_orq
+from .juridico import render as juridico_render
 from .juridico import repositorio as juridico_repo
 from .juridico import teses as juridico_teses
 
@@ -2632,6 +2635,7 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
+    data_da_peticao = date.today()
     diag: dict[str, Any] = {"recuperacao": {}, "fallbacks": []}
     _DIAG.set(diag)
     _INICIO_DA_GERACAO.set(time.monotonic())
@@ -2701,10 +2705,10 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     if estrito:
         avancar_etapa("Identificando todas as teses possíveis do caso…", 22)
         prep_juridico = _etapa_juridica(
-            "análise (fatos, teses, cálculos)", lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista),
+            "análise (fatos, teses, cálculos)", lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista, data_da_peticao),
             falhas_juridicas, diag)
     elif sombra:
-        analise_em_sombra = _em_sombra(lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista))
+        analise_em_sombra = _em_sombra(lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista, data_da_peticao))
     plano_para_consultas = plano
     if estrito and prep_juridico:
         plano_para_consultas = {**(plano or {}), "teses": [*juridico_orq.consultas_das_teses(prep_juridico), *((plano or {}).get("teses") or [])]}
@@ -2716,6 +2720,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
     precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
+    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(plano_est, plano, data_da_peticao)
     _TEXTO_DO_CASO.set(contexto[:20_000])
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria, consultas=consultas
@@ -2724,11 +2729,16 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         prep_juridico = _etapa_juridica(
             "autoridades e PETITION_PLAN", lambda: _fundamentacao_juridica(prep_juridico, diag, uf_jurisprudencia, falhas_juridicas),
             falhas_juridicas, diag)
+    if estrito and (prep_juridico is None or falhas_juridicas):
+        # strict não tem redação degradada: sem a camada jurídica completa, não há peça.
+        raise ErroPeticao(
+            "Modo strict: a camada jurídica não concluiu — " + "; ".join(falhas_juridicas or ["análise não produzida"])
+            + ". Nenhuma peça foi gerada; corrija a causa (ex.: base do Acervo Jurídico) ou use o modo shadow.")
     if estrito and prep_juridico:
         plano_est = prep_juridico["plano_est"]
         outline = _outline_para_redigir(plano) + "\n\n" + plano_da_peticao.para_prompt(plano_est)
     tamanho_caso = len(contexto)
-    contexto += precedentes + legislacao + padroes + outline
+    contexto += precedentes + legislacao + bloco_atualizacao + padroes + outline
     # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
     #
     # As três buscas caem para "" em silêncio (banco fora, embeddings sem crédito — o
@@ -2822,7 +2832,7 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             + "\nEstas correções já foram cobradas nesta peça. A minuta nova deve "
             "nascer com todas aplicadas, sem precisar que sejam pedidas de novo."
         )
-    contexto += _INTEGRIDADE_JURIDICA.format(hoje=datetime.now().strftime('%d/%m/%Y')) if estrito else (
+    contexto += _INTEGRIDADE_JURIDICA.format(hoje=data_da_peticao.strftime('%d/%m/%Y')) if estrito else (
         # Só INTEGRIDADE DE DADOS aqui (data, fonte, marcador de pendência). Estrutura,
         # capítulos, valores, prescrição, fechamento e demais regras do ofício moram na
         # SKILL (`references/regras_de_geracao.md`, `estrutura_peca.md`, `formatacao.md`).
@@ -2990,12 +3000,15 @@ Cada content deve conter parágrafos separados por linha em branco."""
     textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []) or [])]
     # A seção "Dos pedidos" é RENDERIZADA do plano (fonte única), não pedida de novo ao modelo.
     avancar_etapa("Consolidando os pedidos a partir do plano…", 80)
-    secoes, rel_pedidos = _tentar_etapa(
-        "pedidos do plano",
-        lambda: _pedidos_do_plano_na_secao(caso_id, secoes, plano_est),
-        (secoes, {"aplicado": False, "motivo": "etapa falhou"}),
-        diag,
-    )
+    if estrito and prep_juridico:
+        secoes, rel_pedidos = _renderizar_juridico(secoes, prep_juridico, falhas_juridicas, diag)
+    else:
+        secoes, rel_pedidos = _tentar_etapa(
+            "pedidos do plano",
+            lambda: _pedidos_do_plano_na_secao(caso_id, secoes, plano_est),
+            (secoes, {"aplicado": False, "motivo": "etapa falhou"}),
+            diag,
+        )
     aprofundamento["pedidos_do_plano"] = rel_pedidos
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
@@ -3045,6 +3058,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
     avancar_etapa("Validação final do documento…", 96)
     if estrito:
         plano_est["_juridico_estrito"] = True
+        if prep_juridico:
+            # As revisões por LLM acima podem ter tocado pedidos, valor ou data: o código os renderiza de novo.
+            secoes, pipeline["renderizacao_final"] = _renderizar_juridico(secoes, prep_juridico, falhas_juridicas, diag)
     secoes, rel_final, achados_finais = _tentar_etapa(
         "validação final",
         lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso),
@@ -3059,6 +3075,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
     )
     jurimetria, _ = _analisar_jurimetria_da_minuta(secoes, texto_para_uf=contexto)
     pendencias = [str(p) for p in saida.get("pendencias") or [] if str(p).strip()]
+    atualizacao = _resultado_da_atualizacao(atualizacao_futura)
+    if atualizacao:
+        pendencias += [p for p in atualizacao.get("pendencias") or [] if p not in pendencias]
     auditoria_juridica: dict[str, Any] | None = None
     if sombra:
         pipeline["juridico"] = _juridico_em_sombra(
@@ -3073,12 +3092,16 @@ Cada content deve conter parágrafos separados por linha em branco."""
                 "auditoria",
                 lambda: juridico_orq.auditar(secoes, prep_juridico, pendencias=pendencias, texto_das_fontes=texto_do_caso,
                                              carregar_dispositivos=juridico_repo.carregar_dispositivos,
-                                             pedidos_obrigatorios_ausentes=ausentes),
+                                             pedidos_obrigatorios_ausentes=ausentes, llm=_verificador_juridico()),
                 falhas_juridicas, diag)
             pipeline["juridico"] = _etapa_juridica(
                 "rastro", lambda: juridico_orq.trace(prep_juridico, auditoria_juridica, modo=juridico.STRICT, falhas=falhas_juridicas),
                 falhas_juridicas, diag)
         pipeline["juridico"] = pipeline.get("juridico") or juridico_orq.trace_de_falha(juridico.STRICT, falhas_juridicas)
+        if falhas_juridicas or auditoria_juridica is None:
+            raise ErroPeticao(
+                "Modo strict: a verificação jurídica da peça não concluiu — " + "; ".join(falhas_juridicas or ["auditoria não executou"])
+                + ". A peça não foi entregue.")
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
     peticao_aprendizado.registrar_avaliacao(
         generation_id=generation_id, caso_id=caso_id, tipo="post_generation", achados=achados_criticos
@@ -3137,6 +3160,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
                 *(analise.get("lacunas") or []),
                 *_avisos_de_cobertura(cobertura),
                 *_avisos_de_validacao(achados_validacao),
+                *_avisos_de_atualizacao(atualizacao),
             ],
             "pendencias": pendencias or analise.get("fatos_so_na_entrevista") or [],
             "completo": not pendencias and not analise.get("lacunas"),
@@ -3164,8 +3188,12 @@ Cada content deve conter parágrafos separados por linha em branco."""
             "case_brief": brief,
             "cobertura": cobertura,
             "validacao_skill_brief": achados_validacao,
+            "atualizacao_juridica": {**(atualizacao or {"executada": False, "motivo": "desligada ou sem teses"}),
+                                     "acervo_verificado_no_prompt": bool(bloco_atualizacao)},
         },
     }
+    if atualizacao and atualizacao.get("executada"):
+        dados["trace"]["skills"].append("legal_update_research")
     _aplicar_conferencia(dados, secoes, violacoes)
     if estrito:
         dados["trace"]["skills"] += ["fact_matrix", "issue_spotting", "legal_research", "deterministic_calculation",
@@ -3196,18 +3224,22 @@ _CONTRATO_JURIDICO = (
     "\n\n=== CAMADA JURÍDICA ===\n"
     "A escolha das teses JÁ FOI FEITA (PETITION_PLAN): desenvolva todas as teses do plano, cada uma com fatos da matriz, "
     "prova e autoridade; não acrescente nem retire tese. A única marcação permitida no corpo é "
-    "[REQUIRES_LEGAL_RESEARCH: …], onde o plano não trouxer autoridade. Use exatamente os valores e o valor da causa do plano. "
-    "Requeira perícia onde o plano mandar. Onde o plano mandar USE_TABLE, apresente em tabela markdown."
+    "[REQUIRES_LEGAL_RESEARCH: …], onde o plano não trouxer autoridade. Use exatamente os valores e os DADOS CANÔNICOS do plano. "
+    "NÃO redija a lista de pedidos nem o valor da causa: o sistema os monta a partir do plano — em CLAIMS escreva só a frase "
+    "de abertura; em VALUE, nada. Não escreva data no fechamento: o sistema insere a data da petição. Tabela só pelo marcador "
+    "[[TABELA:<categoria>]] que o plano indicar; nunca digite tabela."
 )
 
 
-def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, texto_entrevista: str) -> dict[str, Any]:
+def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, texto_entrevista: str,
+                      data_da_peticao: date | None = None) -> dict[str, Any]:
     fontes = [{"tipo": "documento", "nome": d["arquivo"], "texto": d["texto"]} for d in documentos_logicos(caso_id)[1]]
     fontes.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
     return juridico_orq.analisar(
         plano_est=plano_est, contexto_caso=contexto, fontes=fontes,
         llm=lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=300.0),
         textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        data_referencia=data_da_peticao,
     )
 
 
@@ -3223,6 +3255,21 @@ def _fundamentacao_juridica(prep: dict[str, Any], diag: dict[str, Any], uf: str,
         trechos_legislacao=trechos.get("legislacao") or [], trechos_precedentes=trechos.get("precedentes") or [],
         trt_competente=str((tribunais.UF_PARA_TRT.get(uf) or [""])[0]),
     )
+
+
+def _verificador_juridico() -> Any:
+    """LLM dos gates (sustentação das citações e 2ª camada semântica): JSON estrito, prazo curto."""
+    return lambda instrucao, entrada: _llm_json(instrucao, entrada, timeout=180.0)
+
+
+def _renderizar_juridico(secoes: list[dict[str, Any]], prep: dict[str, Any], falhas: list[str],
+                         diag: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Strict: pedidos, valor da causa, data do fechamento e tabelas saem do código (`juridico.render`)."""
+    resultado = _etapa_juridica("renderização por código", lambda: juridico_render.renderizar(secoes, prep), falhas, diag)
+    if resultado is None:
+        return secoes, {"aplicado": False, "motivo": "renderização falhou"}
+    novas, rel = resultado
+    return novas, {"aplicado": True, **rel}
 
 
 def _etapa_juridica(nome: str, funcao: Any, falhas: list[str], diag: dict[str, Any]) -> Any:
@@ -3277,14 +3324,74 @@ def _juridico_em_sombra(
     try:
         prep = _fundamentacao_juridica(prep, diag, uf, falhas)
         ausentes = documento_final.pedidos_obrigatorios_ausentes(secoes, peticao_skill_arquivos.validacoes_da_skill()["parametros"])
+        com_llm = os.getenv("PETICAO_SOMBRA_VERIFICACAO_LLM", "1").strip() != "0" and ORCAMENTO_SUAVE_S - _tempo_decorrido() > 150
+        if not com_llm:
+            falhas.append("verificação de sustentação das citações e 2ª camada semântica não rodaram (desligadas ou sem tempo)")
         auditoria = juridico_orq.auditar(secoes, prep, pendencias=list(pendencias_legado), texto_das_fontes=texto_do_caso,
-                                         carregar_dispositivos=juridico_repo.carregar_dispositivos, pedidos_obrigatorios_ausentes=ausentes)
+                                         carregar_dispositivos=juridico_repo.carregar_dispositivos, pedidos_obrigatorios_ausentes=ausentes,
+                                         llm=_verificador_juridico() if com_llm else None)
         comparacao = juridico_orq.comparar_com_legado(secoes, prep, auditoria, plano_legado=plano_legado, pendencias_legado=pendencias_legado)
         return juridico_orq.trace(prep, auditoria, modo=juridico.SHADOW, falhas=falhas, comparacao=comparacao)
     except Exception as erro:  # noqa: BLE001 - shadow nunca afeta a geração
         log.exception("petição local: modo shadow falhou")
         falhas.append(f"auditoria/comparação: {_erro_curto(erro)}")
         return juridico_orq.trace_de_falha(juridico.SHADOW, falhas)
+
+
+_EXECUTOR_ATUALIZACAO = ThreadPoolExecutor(max_workers=2, thread_name_prefix="atualizacao-juridica")
+#: Quanto a peça, já redigida, espera a pesquisa de atualização jurídica (ela roda em paralelo à redação).
+ESPERA_MAXIMA_ATUALIZACAO_S = float(os.getenv("PETICAO_ATUALIZACAO_ESPERA_S", "60"))
+
+
+def _iniciar_atualizacao_juridica(plano_est: dict[str, Any], plano: dict[str, Any] | None, data_da_peticao: date) -> tuple[Any, str]:
+    """O Acervo verificado vai ao prompt agora; a pesquisa em fontes oficiais roda em paralelo e só gera pendência e alerta."""
+    if not juridico_atualizacao.ativa():
+        return None, ""
+    teses = juridico_atualizacao.teses_do_plano(plano_est, plano)
+    if not teses:
+        return None, ""
+    registro, bloco = None, ""
+    try:
+        base, _ = juridico_repo.carregar_autoridades()
+        if base:
+            registro = juridico_aut.Registro(base)
+            bloco = juridico_atualizacao.bloco_verificado(teses, registro, data_da_peticao)
+    except Exception as erro:  # noqa: BLE001 - sem Acervo a redação segue como antes
+        log.warning("petição local: Acervo verificado indisponível para a atualização jurídica: %s", _erro_curto(erro))
+
+    def rodar() -> dict[str, Any]:
+        _DIAG.set(None)
+        resultado = juridico_atualizacao.pesquisar(teses, data_da_peticao, registro=registro)
+        if any(c["situacao"] != juridico_atualizacao.JA_VERIFICADA for c in resultado["candidatos"]):
+            try:
+                from .acervo import armazenamento as acervo_armazenamento
+                resultado["alertas_gravados"] = juridico_atualizacao.registrar_alertas(
+                    resultado["candidatos"], acervo_armazenamento.padrao(), agora=acervo_armazenamento.agora_utc())
+            except Exception as erro:  # noqa: BLE001
+                log.warning("petição local: alertas da atualização jurídica não gravados: %s", _erro_curto(erro))
+        return resultado
+
+    try:
+        return _EXECUTOR_ATUALIZACAO.submit(contextvars.copy_context().run, rodar), bloco
+    except Exception:  # noqa: BLE001 - a pesquisa nunca impede a peça
+        log.exception("petição local: atualização jurídica não iniciou")
+        return None, bloco
+
+
+def _resultado_da_atualizacao(futuro: Any) -> dict[str, Any] | None:
+    if futuro is None:
+        return None
+    try:
+        return futuro.result(timeout=max(1.0, min(ESPERA_MAXIMA_ATUALIZACAO_S, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
+    except Exception as erro:  # noqa: BLE001 - inclui TimeoutError
+        return {"executada": False, "motivo": f"não concluiu a tempo ou falhou: {_erro_curto(erro)}", "candidatos": [], "pendencias": []}
+
+
+def _avisos_de_atualizacao(atualizacao: dict[str, Any] | None) -> list[str]:
+    if not atualizacao or atualizacao.get("executada"):
+        return []
+    return [f"Atualização jurídica por tese não foi pesquisada nesta geração ({atualizacao.get('motivo') or 'sem motivo registrado'}); "
+            "confira julgados e leis recentes das teses antes de protocolar."]
 
 
 def _aplicar_veredito_juridico(dados: dict[str, Any], auditoria: dict[str, Any] | None, falhas: list[str] | None = None) -> None:
@@ -3305,6 +3412,10 @@ def _aplicar_veredito_juridico(dados: dict[str, Any], auditoria: dict[str, Any] 
     prontidao.setdefault("warnings", []).extend(
         f"[{a['auditor']}] {a['codigo']}: {a['trecho'] or a['detalhe']}"[:220] for a in auditoria["achados"] if a["severidade"] != "bloqueia")
     prontidao["auditoria_juridica"] = auditoria["veredito"]
+    # READY só quando a peça inteira (estrutura + todos os gates) passou; qualquer bloqueio → BLOCKED.
+    prontidao["status"] = "READY" if prontidao["ready"] else "BLOCKED"
+    prontidao["achados_juridicos"] = [{"gate": a["auditor"], "codigo": a["codigo"], "severidade": a["severidade"], "secao": a["secao"],
+                                       "trecho": a["trecho"], "detalhe": a["detalhe"]} for a in auditoria["achados"]]
 
 
 def _avisos_de_pipeline(pipeline: dict[str, Any]) -> list[str]:
@@ -5266,44 +5377,67 @@ def _celulas_tabela_markdown(linha: str) -> list[str]:
     return [celula.strip() for celula in limpa.split("|")]
 
 
-def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
+#: Área útil de uma A4 com margens de 3 cm e 2 cm, quando a configuração visual não chega.
+LARGURA_TABELA_PADRAO = 9070
+#: Nenhuma coluna fica mais estreita que isto (≈1,6 cm), nem a de um código curto.
+LARGURA_MINIMA_COLUNA = 900
+#: Acima disto o texto quebra de qualquer jeito; não adianta a coluna crescer mais.
+_TETO_CARACTERES_COLUNA = 70
+
+
+def _larguras_das_colunas(cabecalho: list[str], linhas: list[list[str]], largura_total: int) -> list[int]:
+    """Colunas proporcionais ao texto que carregam: a coluna da conta ganha espaço e a do código, não."""
+    colunas = len(cabecalho)
+    pesos = []
+    for i in range(colunas):
+        textos = [cabecalho[i], *(linha[i] for linha in linhas)]
+        maior = max((len(parte) for t in textos for parte in str(t or "").split("\n")), default=0)
+        pesos.append(max(6, min(_TETO_CARACTERES_COLUNA, maior)))
+    minimo = min(LARGURA_MINIMA_COLUNA, largura_total // colunas)
+    livre = largura_total - minimo * colunas
+    larguras = [minimo + int(livre * p / sum(pesos)) for p in pesos]
+    larguras[pesos.index(max(pesos))] += largura_total - sum(larguras)
+    return larguras
+
+
+def _tabela_xml(cabecalho: list[str], linhas: list[list[str]], *, largura_total: int | None = None) -> str:
     """Uma tabela Word nativa, com bordas e expansão automática de linhas.
 
     O conteúdo chega da IA em Markdown somente como uma representação transitória.
     O DOCX final recebe ``w:tbl`` editável, nunca barras, tabs ou imagem.
+
+    Compacta de propósito: ocupa a largura útil da página, com colunas proporcionais ao
+    conteúdo, fonte menor que a do corpo e linha simples — sem herdar o espaçamento de
+    1,5 e o recuo de parágrafo da peça, que deixavam cada linha da memória de cálculo alta.
     """
     colunas = max(2, len(cabecalho), *(len(linha) for linha in linhas))
     cabecalho = (cabecalho + [""] * colunas)[:colunas]
     linhas = [(linha + [""] * colunas)[:colunas] for linha in linhas]
-    # A tabela de dados contratuais do escritório usa rótulo mais estreito e valor
-    # mais largo. Para outras estruturas, as colunas ficam proporcionais e legíveis.
-    # Uma largura ligeiramente menor que a área útil deixa a tabela respirar dentro
-    # da página, em vez de parecer uma grade colada às margens. O valor é em twips.
-    largura_total = 7800
-    if colunas == 2:
-        larguras = [2400, 5400]
-    else:
-        base, resto = divmod(largura_total, colunas)
-        larguras = [base + (1 if indice < resto else 0) for indice in range(colunas)]
+    largura_total = largura_total or LARGURA_TABELA_PADRAO
+    larguras = _larguras_das_colunas(cabecalho, linhas, largura_total)
+    tamanho = 20 if colunas <= 3 else 18
 
     def celula(texto: str, largura: int, *, destaque: bool = False) -> str:
         # A célula é texto simples: formatação de trecho feita na tela sobre uma
         # linha de tabela não pode sair literal (`[[i]]`) dentro da grade.
         texto = "\n".join(_sem_formatacao(parte) for parte in str(texto or "").split("\n"))
         partes = texto.split("\n") or [""]
+        rpr = f'<w:rPr>{"<w:b/>" if destaque else ""}<w:sz w:val="{tamanho}"/><w:szCs w:val="{tamanho}"/></w:rPr>'
         runs = "".join(
-            f'<w:r><w:rPr>{"<w:b/>" if destaque else ""}</w:rPr><w:t xml:space="preserve">{escape(parte)}</w:t></w:r>'
+            f'<w:r>{rpr}<w:t xml:space="preserve">{escape(parte)}</w:t></w:r>'
             + ("<w:r><w:br/></w:r>" if indice < len(partes) - 1 else "")
             for indice, parte in enumerate(partes)
         )
+        alinhamento = "right" if not destaque and re.fullmatch(r"R\$\s*[\d.]+,\d{2}", texto.strip()) else "left"
         return (
             f'<w:tc><w:tcPr><w:tcW w:w="{largura}" w:type="dxa"/>'
             '<w:vAlign w:val="center"/></w:tcPr>'
-            f'<w:p><w:pPr><w:jc w:val="left"/><w:ind w:firstLine="0"/></w:pPr>{runs}</w:p></w:tc>'
+            f'<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>'
+            f'<w:ind w:left="0" w:right="0" w:firstLine="0"/><w:jc w:val="{alinhamento}"/></w:pPr>{runs}</w:p></w:tc>'
         )
 
     def linha(valores: list[str], *, destaque: bool = False) -> str:
-        return "<w:tr>" + "".join(
+        return ("<w:tr><w:trPr><w:tblHeader/></w:trPr>" if destaque else "<w:tr>") + "".join(
             celula(valor, larguras[indice], destaque=destaque)
             for indice, valor in enumerate(valores)
         ) + "</w:tr>"
@@ -5317,8 +5451,8 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
         '<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
         '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>'
         '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders>'
-        '<w:tblCellMar><w:top w:w="50" w:type="dxa"/><w:left w:w="50" w:type="dxa"/>'
-        '<w:bottom w:w="50" w:type="dxa"/><w:right w:w="50" w:type="dxa"/></w:tblCellMar>'
+        '<w:tblCellMar><w:top w:w="15" w:type="dxa"/><w:left w:w="60" w:type="dxa"/>'
+        '<w:bottom w:w="15" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar>'
         '</w:tblPr><w:tblGrid>'
         + "".join(f'<w:gridCol w:w="{largura}"/>' for largura in larguras)
         + "</w:tblGrid>"
@@ -5326,6 +5460,13 @@ def _tabela_xml(cabecalho: list[str], linhas: list[list[str]]) -> str:
         + "".join(linha(valores) for valores in linhas)
         + "</w:tbl>"
     )
+
+
+def _largura_da_tabela(visual: dict[str, Any]) -> int:
+    try:
+        return _twips_de_cm(_largura_util_cm(visual))
+    except (KeyError, TypeError, ValueError):
+        return LARGURA_TABELA_PADRAO
 
 
 def _conteudo_com_tabelas_xml(
@@ -5371,7 +5512,7 @@ def _conteudo_com_tabelas_xml(
                 indice += 1
             if len(cabecalho) >= 2 and tabela:
                 descarregar_comum()
-                partes.append(_tabela_xml(cabecalho, tabela))
+                partes.append(_tabela_xml(cabecalho, tabela, largura_total=_largura_da_tabela(visual)))
                 partes.append("<w:p/>")
                 continue
             comum.extend([atual, proxima])
