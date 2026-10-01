@@ -943,7 +943,9 @@ def _com_prazo_total(chamada: Any, prazo_s: float) -> Any:
 
 #: DeepSeek lento ou fora do ar não pode parar a peça (18/09 e 01/10: um "oi" levava mais de 40 s). Passado este
 #: tempo sem resposta, a OpenAI é chamada em paralelo e vale quem responder primeiro com sucesso.
-ATRASO_RESERVA_S = float(os.getenv("PETICAO_ATRASO_RESERVA_S", "40"))
+ATRASO_RESERVA_S = float(os.getenv("PETICAO_ATRASO_RESERVA_S", "60"))
+#: Pedido grande demora de verdade (140 mil caracteres de entrada levam ~90 s): o atraso cresce com ele.
+ATRASO_POR_MIL_CARACTERES_S = float(os.getenv("PETICAO_ATRASO_POR_MIL_S", "0.4"))
 MODELO_RESERVA = os.getenv("PETICAO_MODELO_RESERVA", "") or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
 
 
@@ -986,6 +988,7 @@ def _escolha_com_reserva(base: str, chave: str, modelo: str, instrucao: str, ent
         return _EXECUTOR_PROVEDOR.submit(contextvars.copy_context().run, _chamar_provedor, fornecedor, b, c, m,
                                       instrucao, entrada, max_tokens, timeout)
 
+    atraso = ATRASO_RESERVA_S + ATRASO_POR_MIL_CARACTERES_S * (len(instrucao) + len(entrada)) / 1000
     pendentes = {lancar("deepseek", base, chave, modelo)}
     reserva_lancada = False
     limite = time.monotonic() + timeout
@@ -994,7 +997,7 @@ def _escolha_com_reserva(base: str, chave: str, modelo: str, instrucao: str, ent
         espera = limite - time.monotonic()
         if espera <= 0:
             break
-        prazo = min(espera, ATRASO_RESERVA_S) if not reserva_lancada else espera
+        prazo = min(espera, atraso) if not reserva_lancada else espera
         prontos, pendentes = futures_wait(pendentes, timeout=prazo, return_when=FIRST_COMPLETED)
         for futuro in prontos:
             try:
@@ -2286,7 +2289,7 @@ def _conferir_contra_os_autos(
     material: str = "",
     corrigir: bool = True,
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
-    """Confere a peça contra os autos e, se `corrigir`, pede UMA rodada de correção.
+    """Confere a peça contra os autos e corrige cada achado corrigível.
 
     Devolve as seções (corrigidas e com as citações não verificadas carimbadas), as
     violações que SOBRARAM e o registro do que aconteceu, para o trace da geração.
@@ -2301,16 +2304,15 @@ def _conferir_contra_os_autos(
     corrigiu = False
     rodadas = 0
     secoes_puladas: list[str] = []
-    # UMA rodada, seções EM PARALELO: era aqui que a geração passava mais tempo ("Conferindo a peça contra os
-    # autos…") — duas rodadas, uma seção por vez, cada chamada com o material inteiro. O que sobrar é revisto
-    # pelo auditor final, que roda de novo a mesma conferência logo adiante.
-    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=180):
+    # Um gate não pode ser parcial: deixar VALUE ou CLAIMS fora da correção por
+    # limite de conveniência foi exatamente o que permitiu valores incompatíveis
+    # chegarem à minuta. Cada rodada trata todas as seções afetadas, em lotes
+    # pequenos para não sobrecarregar o provedor; o resultado é sempre conferido
+    # de novo antes de avançar.
+    max_rodadas = int(os.getenv("PETICAO_CONFERENCIA_MAX_RODADAS", "3"))
+    tamanho_lote = int(os.getenv("PETICAO_CONFERENCIA_LOTE_SECOES", "3"))
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < max_rodadas and not _sem_tempo(folga_s=120):
         rodadas += 1
-        # A primeira conferência é determinística e sempre roda. A reescrita por
-        # modelo é uma tentativa de conveniência, não pode transformar uma peça
-        # já gerada em uma espera de vários minutos (nem em falha por sobrecarga
-        # do provedor). Dois blocos cobrem os erros de maior impacto sem mandar a
-        # mesma base de 80 mil caracteres para seis chamadas simultâneas.
         por_secao = {
             str(secao.get("code") or ""): [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
             for secao in secoes
@@ -2322,29 +2324,25 @@ def _conferir_contra_os_autos(
                 -len(por_secao[str(s.get("code") or "")]),
             )
         )
-        alvos = alvos[:2]
-        secoes_puladas = [
-            str(s.get("code") or "") for s in secoes
-            if por_secao.get(str(s.get("code") or "")) and s not in alvos
-        ]
-        extra = _material_para_resolver_pesquisas(violacoes, alvos)
+        secoes_puladas = []
+        novas_por_codigo: dict[str, dict[str, Any]] = {}
+        for inicio in range(0, len(alvos), max(1, tamanho_lote)):
+            lote = alvos[inicio:inicio + max(1, tamanho_lote)]
+            extra = _material_para_resolver_pesquisas(violacoes, lote)
 
-        def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
-            da_secao = por_secao.get(str(secao.get("code") or ""), [])
-            if not da_secao:
-                return secao
-            novo = _reescrever_secao(
-                caso_id,
-                secao,
-                conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
-                material[:35_000],
-            )
-            return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
+            def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
+                da_secao = por_secao.get(str(secao.get("code") or ""), [])
+                novo = _reescrever_secao(
+                    caso_id, secao,
+                    conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
+                    material[:35_000],
+                )
+                return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
 
-        novas_por_codigo = {
-            str(secao.get("code") or ""): corrigida
-            for secao, corrigida in zip(alvos, _em_paralelo_com_contexto(corrigir_secao, alvos, max_workers=2))
-        }
+            novas_por_codigo.update({
+                str(secao.get("code") or ""): corrigida
+                for secao, corrigida in zip(lote, _em_paralelo_com_contexto(corrigir_secao, lote, max_workers=len(lote)))
+            })
         novas = [novas_por_codigo.get(str(secao.get("code") or ""), secao) for secao in secoes]
         if novas == secoes:
             break
