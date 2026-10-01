@@ -610,6 +610,20 @@ def _alinhar_valor_da_causa(secoes: list[dict[str, Any]], rel: dict[str, int], s
     return novas
 
 
+def _soma_do_ledger(plano: dict[str, Any]) -> float | None:
+    """Valor da causa = soma dos pedidos do ledger (a mesma regra do strict e da memória de cálculo).
+
+    Somar o R$ do texto dos pedidos conta também as bases e o total da memória de cálculo.
+    Sem nenhum pedido com valor no ledger, None (o texto continua sendo a única fonte).
+    """
+    definido = (plano.get("valor_da_causa_calculado") or {}).get("valor")
+    if definido:
+        return definido
+    from .juridico.calculos import valor_da_causa
+
+    return valor_da_causa(plano.get("pedidos") or [])["valor"] or None
+
+
 def higienizar(
     secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], *, texto_dos_autos: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -632,7 +646,7 @@ def higienizar(
         rel["qualificacao_canonica"] = rel_quali
     secoes, n_alheio = _dado_alheio_na_abertura(secoes, plano.get("partes") or {}, texto_dos_autos)
     rel["dados_de_outro_caso_substituidos"] = n_alheio
-    soma_definida = (plano.get("valor_da_causa_calculado") or {}).get("valor") or None
+    soma_definida = _soma_do_ledger(plano)
     if plano.get("_juridico_estrito"):
         secoes, rel["estabilidade"] = _sinalizar_sem_reescrever(secoes, soma_definida)
     else:
