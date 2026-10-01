@@ -148,6 +148,8 @@ Devolva JSON:
      "fatos_necessarios":[{{"fato":"o que precisa estar provado/alegado", "presente":true, "fato_id":"M00x ou null"}}],
      "documentos":["documento do caso que prova"], "base_legal_a_pesquisar":["assunto normativo a pesquisar — SEM número de artigo de memória"],
      "jurisprudencia_a_pesquisar":["assunto/tese de jurisprudência a pesquisar — SEM número de súmula, tema ou processo de memória"],
+     "requisitos":[{{"requisito":"elemento jurídico que a tese exige (ex.: conduta, dano, nexo, jornada excedente)", "fatos":["M00x que o atende"], "presente":true}}],
+     "proposicoes":["2 a 5 proposições jurídicas que a peça precisa demonstrar para a tese — SEM número de artigo/súmula/tema"],
      "pedido":"o que se pede", "reflexos":["parcelas reflexas"], "prova":["documental|testemunhal|pericial: o quê"],
      "exige_pericia":false, "risco":"baixo|medio|alto — motivo",
      "calculo":{{"rubrica":"uma das calculadoras abaixo ou null", "parametros":{{}}, "parametros_faltantes":["parâmetro sem fonte"]}}}}]
@@ -167,6 +169,8 @@ REGRAS:
   REJECTED_STRATEGIC quando cabível mas a estratégia do escritório manda não deduzir (diga qual regra da skill).
 - Tese com fato necessário ausente da matriz → POTENTIAL_NEEDS_CONFIRMATION (não rejeite só por falta de valor: valor se calcula ou se apura).
 - Fato que exige perícia (insalubridade, periculosidade, nexo de doença) → exige_pericia=true e a prova pericial em `prova`.
+- Em `requisitos`, cada elemento jurídico que a tese exige, ligado por id aos fatos da MATRIZ que o atendem (presente=false
+  quando nenhum fato o atende). Em `proposicoes`, o que a peça precisa convencer o juiz, uma afirmação jurídica por item.
 - Não cite número de artigo, súmula, OJ, tema ou processo: diga O QUE pesquisar. A base jurídica vem de outra camada.
 - Parâmetro de cálculo só com fonte no material; o que faltar vai em parametros_faltantes.
 - Não invente fato. Entrevista é alegação; documento é prova.
@@ -216,18 +220,27 @@ def normalizar(saida: dict[str, Any] | None, catalogo: list[dict[str, Any]], mat
             decisao, rebaixada = POTENCIAL, "rejeitada por falta de fato, mas a matriz tem fato que a sustenta: " + ", ".join(utilizaveis)
         prova = _lista(bruta.get("prova"))
         calc = bruta.get("calculo") if isinstance(bruta.get("calculo"), dict) else {}
+        requisitos = []
+        for r in bruta.get("requisitos") or []:
+            if not isinstance(r, dict) or not str(r.get("requisito") or "").strip():
+                continue
+            ids = _lista(r.get("fatos"))
+            requisitos.append({"requisito": str(r["requisito"]).strip()[:200], "fatos": [i for i in ids if i in fatos],
+                               "fatos_invalidos": [i for i in ids if i not in fatos], "presente_segundo_o_modelo": bool(r.get("presente"))})
+        proposicoes = [p[:300] for p in _lista(bruta.get("proposicoes"))][:5]
         teses.append({
             "id": f"I{len(teses) + 1:02d}", "catalogo_id": cat, "tese": str(bruta["tese"]).strip(), "decisao": decisao,
             "decisao_do_modelo": str(bruta.get("decisao") or "").strip().upper(), "motivo": motivo, "rebaixada_por": rebaixada,
             "fatos_que_suportam": suportam, "fatos_invalidos": invalidos, "fatos_necessarios": necessarios, "fatos_faltantes": faltantes,
             "documentos": _lista(bruta.get("documentos")), "base_legal_a_pesquisar": _lista(bruta.get("base_legal_a_pesquisar")),
             "jurisprudencia_a_pesquisar": _lista(bruta.get("jurisprudencia_a_pesquisar")), "pedido": str(bruta.get("pedido") or "").strip(),
-            "reflexos": _lista(bruta.get("reflexos")), "prova": prova,
+            "reflexos": _lista(bruta.get("reflexos")), "prova": prova, "requisitos": requisitos, "proposicoes": proposicoes,
             "exige_pericia": bool(bruta.get("exige_pericia")) or any("peric" in norm(p) for p in prova),
             "risco": str(bruta.get("risco") or "").strip(),
             "calculo": {"rubrica": str(calc.get("rubrica") or "").strip() or None, "parametros": calc.get("parametros") if isinstance(calc.get("parametros"), dict) else {},
                         "parametros_faltantes": _lista(calc.get("parametros_faltantes"))},
         })
+        invalidos += [i for r in requisitos for i in r["fatos_invalidos"] if i not in invalidos]
         if invalidos:
             alertas.append(f"{teses[-1]['id']} cita fatos inexistentes na matriz: {', '.join(invalidos)}")
     cobertos = {t["catalogo_id"] for t in teses if t["catalogo_id"]}
