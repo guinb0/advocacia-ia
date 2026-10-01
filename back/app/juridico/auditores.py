@@ -1,0 +1,221 @@
+"""Os quatro auditores pós-geração. A peça só está PRONTA se os quatro passarem.
+
+LEGAL        toda citação tem autoridade vigente na data de referência; nenhum critério superado.
+FACT         todo valor e data afirmados têm fonte; inferido não é afirmado; contradição não é usada.
+CALCULATION  todo valor dos pedidos vem de cálculo; valor da causa único e igual à soma.
+CONSISTENCY  nenhuma tese do issue spotting some sem registro; perícia requerida; contradições expostas.
+
+Nenhum auditor altera o texto: apontam, e o veredito decide se a peça pode ser entregue como pronta.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import date
+from typing import Any
+
+from . import autoridades as aut
+from . import calculos as calc
+from . import teses as ts
+from .autoridades import norm
+from .fatos import INFERIDO, _DATA, _REAIS, valor_canonico
+
+BLOQUEIA, ALERTA = "bloqueia", "alerta"
+_PESQUISA = re.compile(r"\[(?:REQUIRES_LEGAL_RESEARCH|PESQUISAR PRECEDENTE|CONFERIR)[^\]]*\]", re.I)
+_IRDR = re.compile(r"\bIRDR\b|incidente de resolu[cç][aã]o de demandas repetitivas", re.I)
+_SECOES_DE_PEDIDO = {"CLAIMS", "VALUE"}
+
+
+def _achado(auditor: str, codigo: str, severidade: str, secao: str = "", trecho: str = "", detalhe: str = "") -> dict[str, Any]:
+    return {"auditor": auditor, "codigo": codigo, "severidade": severidade, "secao": secao, "trecho": trecho[:220], "detalhe": detalhe[:400]}
+
+
+def _texto(s: dict[str, Any]) -> str:
+    return str(s.get("content") or "")
+
+
+def _reais_do_texto(texto: str) -> list[float]:
+    saida = []
+    for m in _REAIS.finditer(texto or ""):
+        bruto = m[1]
+        try:
+            saida.append(round(float(bruto.replace(".", "").replace(",", ".")) if "," in bruto else float(bruto.replace(".", "")), 2))
+        except ValueError:
+            continue
+    return saida
+
+
+# ------------------------------------------------------------------ LEGAL
+
+def auditar_legal(secoes: list[dict[str, Any]], registro: aut.Registro, data_referencia: date | None) -> dict[str, Any]:
+    achados, citacoes = [], []
+    for s in secoes:
+        texto, code = _texto(s), str(s.get("code") or "")
+        for r in aut.gate(texto, registro, data_referencia):
+            r["secao"] = code
+            citacoes.append(r)
+            if r["status"] == aut.VALIDADA_SEM_VIGENCIA:
+                achados.append(_achado("LEGAL", "VIGENCIA_NAO_VERIFICADA", ALERTA, code, r["trecho"], r.get("motivo", "")))
+            elif not r["aprovada"]:
+                achados.append(_achado("LEGAL", r["status"], BLOQUEIA, code, r["trecho"], r.get("motivo", "")))
+        for c in aut.criterios_superados(texto, registro, data_referencia):
+            achados.append(_achado("LEGAL", "CRITERIO_SUPERADO", BLOQUEIA, code, c["marcador"], c["motivo"] + (f"; use {c['superado_por']}" if c["superado_por"] else "")))
+        for m in _PESQUISA.finditer(texto):
+            achados.append(_achado("LEGAL", "PESQUISA_JURIDICA_PENDENTE", BLOQUEIA, code, m[0], "fundamento ainda sem autoridade validada"))
+        for m in _IRDR.finditer(texto):
+            if re.search(r"\bTST\b|\btema\b", texto[max(0, m.start() - 220): m.end() + 220], re.I):
+                achados.append(_achado("LEGAL", "INSTITUTO_A_CONFERIR", ALERTA, code, m[0],
+                                       "IRDR citado junto a tese do TST: conferir se o instituto é o IRR (recursos de revista repetitivos)"))
+    return {"auditor": "LEGAL", "achados": achados, "citacoes": citacoes,
+            "authority_ids": sorted({c["authority_id"] for c in citacoes if c.get("authority_id") and c["aprovada"]})}
+
+
+# ------------------------------------------------------------------ FACT
+
+_REFERENCIA_DE_PRECEDENTE = re.compile(r"\b(?:TST|TRT|STF|STJ|Rel\.|Relat|Redator|julgad|DEJT|DJe|publicad)", re.I)
+
+
+def _dentro_de_citacao_de_precedente(texto: str, inicio: int) -> bool:
+    """Data de julgamento/publicação de precedente não é fato do caso: quem a confere é o auditor LEGAL."""
+    abre = texto.rfind("(", max(0, inicio - 400), inicio)
+    if abre < 0 or ")" in texto[abre:inicio]:
+        return False
+    fecha = texto.find(")", inicio)
+    return bool(_REFERENCIA_DE_PRECEDENTE.search(texto[abre: fecha if fecha > 0 else inicio + 200]))
+
+
+def _consta_das_fontes(m: re.Match[str], fontes: str) -> bool:
+    """Contracheque e extrato trazem o valor em coluna, sem o "R$": com centavos, o número basta."""
+    if not fontes:
+        return False
+    candidatos = {m[0], m[0].replace("R$ ", "R$")}
+    if m.re is _REAIS and "," in m[1]:
+        candidatos.add(m[1])
+    return any(re.search(rf"(?<![\d.,]){re.escape(c)}(?!\d)", fontes) for c in candidatos)
+
+
+def auditar_fatos(secoes: list[dict[str, Any]], matriz: dict[str, Any], *, calculos: list[dict[str, Any]] | None = None,
+                  texto_das_fontes: str = "") -> dict[str, Any]:
+    achados = []
+    fatos = matriz.get("fatos") or []
+    sustentados = {valor_canonico(f["valor"]) for f in fatos if f.get("valor") and f["estado"] != INFERIDO and not f.get("contradicoes")}
+    sustentados |= {valor_canonico(f.get("data")) for f in fatos if f.get("data")}
+    for c in calculos or []:
+        sustentados.add(valor_canonico(calc.brl(c.get("valor") or 0)))
+        for linha in c.get("memoria") or []:
+            sustentados |= {valor_canonico(f"R$ {m[1]}") for m in _REAIS.finditer(linha)}
+    fontes_norm = texto_das_fontes or ""
+    inferidos = {valor_canonico(f["valor"]): f for f in fatos if f.get("valor") and f["estado"] == INFERIDO}
+    contraditorios = {valor_canonico(f["valor"]): f for f in fatos if f.get("valor") and f.get("contradicoes")}
+    for s in secoes:
+        code, texto = str(s.get("code") or ""), _texto(s)
+        if code in _SECOES_DE_PEDIDO:
+            continue
+        for m in list(_REAIS.finditer(texto)) + list(_DATA.finditer(texto)):
+            bruto = m[0]
+            canon = valor_canonico(bruto)
+            if _dentro_de_citacao_de_precedente(texto, m.start()):
+                continue
+            if canon in contraditorios:
+                achados.append(_achado("FACT", "FATO_CONTRADITORIO_USADO", BLOQUEIA, code, bruto, f"versão de {contraditorios[canon]['chave']} em contradição não resolvida"))
+            elif canon in sustentados:
+                continue
+            elif canon in inferidos:
+                achados.append(_achado("FACT", "FATO_INFERIDO_AFIRMADO", BLOQUEIA, code, bruto, "valor proposto pelo modelo sem fonte no material"))
+            elif _consta_das_fontes(m, fontes_norm):
+                continue
+            else:
+                achados.append(_achado("FACT", "FATO_SEM_FONTE", BLOQUEIA, code, bruto, "valor/data sem fato correspondente na matriz nem nas fontes do caso"))
+    for f in fatos:
+        if f["estado"] != "alegado" or not f.get("valor"):
+            continue
+        for s in secoes:
+            t = _texto(s)
+            i = t.find(str(f["valor"]))
+            if i >= 0 and re.search(r"comprovad|demonstrad|restou provad|documentalmente", t[max(0, i - 160): i + 160], re.I):
+                achados.append(_achado("FACT", "ALEGACAO_COMO_PROVA", ALERTA, str(s.get("code") or ""), f["valor"], f"{f.get('chave') or f['fato'][:60]} só tem fonte não documental"))
+                break
+    return {"auditor": "FACT", "achados": achados}
+
+
+# ------------------------------------------------------------------ CALCULATION
+
+_VALOR_DA_CAUSA = re.compile(r"(?:valor\s+da\s+causa|d[áa][\s-]+se\s+[àa]\s+causa\s+o\s+valor)[^R]{0,80}(R\$\s*[\d.]+,\d{2})", re.I)
+
+
+def auditar_calculos(secoes: list[dict[str, Any]], pedidos: list[dict[str, Any]], calculos: list[dict[str, Any]]) -> dict[str, Any]:
+    achados = []
+    declarados: list[float] = []
+    for s in secoes:
+        texto = _texto(s)
+        if str(s.get("code") or "") == "VALUE":
+            declarados += _reais_do_texto(texto)
+        else:
+            declarados += [v for m in _VALOR_DA_CAUSA.finditer(texto) for v in _reais_do_texto(m[1])]
+    for e in calc.verificar_valor_da_causa(pedidos, declarados):
+        achados.append(_achado("CALCULATION", e["codigo"], BLOQUEIA, "VALUE", "", e["detalhe"]))
+    permitidos = {round(float(p["valor"]), 2) for p in pedidos if p.get("valor") not in (None, "")}
+    for c in calculos:
+        if c.get("erro"):
+            achados.append(_achado("CALCULATION", "CALCULO_INCOMPLETO", ALERTA, "", c.get("rubrica", ""), c["erro"]))
+            continue
+        permitidos.add(round(float(c.get("valor") or 0), 2))
+        for linha in c.get("memoria") or []:
+            permitidos |= set(_reais_do_texto(linha))
+    soma = calc.valor_da_causa(pedidos)["valor"]
+    if soma:
+        permitidos.add(round(soma, 2))
+    claims = "\n".join(_texto(s) for s in secoes if str(s.get("code") or "") == "CLAIMS")
+    for v in _reais_do_texto(claims):
+        if v not in permitidos:
+            achados.append(_achado("CALCULATION", "VALOR_SEM_CALCULO", BLOQUEIA, "CLAIMS", calc.brl(v), "valor nos pedidos sem cálculo determinístico correspondente"))
+    for p in pedidos:
+        if p.get("valor") not in (None, "") and calc.brl(p["valor"]) not in claims:
+            achados.append(_achado("CALCULATION", "PEDIDO_SEM_VALOR_NO_TEXTO", ALERTA, "CLAIMS", p.get("objeto", "")[:120], f"valor calculado {calc.brl(p['valor'])} não aparece nos pedidos"))
+    return {"auditor": "CALCULATION", "achados": achados, "valor_da_causa": calc.valor_da_causa(pedidos), "declarados": sorted(set(declarados))}
+
+
+# ------------------------------------------------------------------ CONSISTENCY
+
+def _tokens(t: str) -> set[str]:
+    return {x for x in re.findall(r"[a-z]{4,}", norm(t))}
+
+
+def auditar_consistencia(secoes: list[dict[str, Any]], *, issues: dict[str, Any], plano_est: dict[str, Any],
+                         pendencias: list[str], matriz: dict[str, Any], tabelas: dict[str, Any] | None = None,
+                         pedidos_obrigatorios_ausentes: list[str] | None = None) -> dict[str, Any]:
+    achados = [_achado("CONSISTENCY", "PEDIDO_OBRIGATORIO_AUSENTE", BLOQUEIA, "CLAIMS", p, "a skill declara este pedido como obrigatório e a peça não o traz")
+               for p in pedidos_obrigatorios_ausentes or []]
+    corpo = "\n".join(_texto(s) for s in secoes)
+    corpo_tokens = _tokens(corpo)
+    pend = norm(" ".join(pendencias or []))
+    pedidos = plano_est.get("pedidos") or []
+    for t in issues.get("teses") or []:
+        alvo = _tokens(t["tese"])
+        no_texto = bool(alvo) and len(alvo & corpo_tokens) / len(alvo) >= 0.6
+        com_pedido = any(p.get("tese_origem") == t.get("tese_plano_id") for p in pedidos if t.get("tese_plano_id"))
+        if t["decisao"] == ts.INCLUIR and t.get("pendente_de_calculo"):
+            codigo = "TESE_PENDENTE_DE_CALCULO" if norm(t["tese"])[:40] in pend else "TESE_SUMIU_SEM_REGISTRO"
+            achados.append(_achado("CONSISTENCY", codigo, BLOQUEIA, "CLAIMS", t["tese"], "tese incluída cujo pedido depende de parâmetro de cálculo ausente"))
+        elif t["decisao"] == ts.INCLUIR and not (no_texto or com_pedido):
+            achados.append(_achado("CONSISTENCY", "TESE_SUMIU", BLOQUEIA, "", t["tese"], "tese incluída no issue spotting não aparece na peça"))
+        if t["decisao"] == ts.POTENCIAL and norm(t["tese"])[:40] not in pend:
+            achados.append(_achado("CONSISTENCY", "TESE_SUMIU_SEM_REGISTRO", BLOQUEIA, "", t["tese"], "tese a confirmar não foi levada às pendências do advogado"))
+        if t["decisao"] == ts.INCLUIR and t.get("exige_pericia") and not re.search(r"per[ií]cia|pericial", corpo, re.I):
+            achados.append(_achado("CONSISTENCY", "PERICIA_NAO_REQUERIDA", BLOQUEIA, "CLAIMS", t["tese"], "fato que exige perícia sem requerimento de prova pericial"))
+    for c in matriz.get("contradicoes") or []:
+        if not c.get("resolvida") and norm(c["chave"]) not in pend:
+            achados.append(_achado("CONSISTENCY", "CONTRADICAO_NAO_EXPOSTA", BLOQUEIA, "", c["chave"], "contradição entre fontes não levada ao advogado"))
+    for cat, d in (tabelas or {}).items():
+        if d.get("decisao") == "USE_TABLE" and "|" not in corpo:
+            achados.append(_achado("CONSISTENCY", "TABELA_AUSENTE", ALERTA, "", cat, "o plano decidiu USE_TABLE e a peça não traz tabela"))
+    return {"auditor": "CONSISTENCY", "achados": achados}
+
+
+def veredito(*relatorios: dict[str, Any]) -> dict[str, Any]:
+    por_auditor = {}
+    for r in relatorios:
+        bloqueios = [a for a in r["achados"] if a["severidade"] == BLOQUEIA]
+        por_auditor[r["auditor"]] = {"status": "FAIL" if bloqueios else "PASS", "bloqueios": len(bloqueios),
+                                     "alertas": len(r["achados"]) - len(bloqueios)}
+    return {"pronta": all(v["status"] == "PASS" for v in por_auditor.values()), "auditores": por_auditor}

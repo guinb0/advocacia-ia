@@ -440,11 +440,34 @@ def _reais_br(valor: float) -> str:
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _estabilizar_o_que_ja_esteve_certo(secoes: list[dict[str, Any]]) -> dict[str, int]:
+def pedidos_obrigatorios_ausentes(secoes: list[dict[str, Any]], params: dict[str, Any]) -> list[str]:
+    """Os `pedidos_obrigatorios` que a skill declara em validacoes.md e a peça não traz. Sem a declaração, nada."""
+    blob = pp.norm("\n".join(str(s.get("content") or "") for s in secoes))
+    return [str(p.get("nome") or p.get("padrao")) for p in params.get("pedidos_obrigatorios") or []
+            if isinstance(p, dict) and p.get("padrao") and not re.search(str(p["padrao"]), blob)]
+
+
+def _sinalizar_sem_reescrever(secoes: list[dict[str, Any]], soma_definida: float | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Camada jurídica em strict: o renderer não escreve conteúdo jurídico nem apaga pedido.
+
+    Pedido, citação, comunicação processual e valor de dano moral vêm do PETITION_PLAN e passam pelo
+    gate de citação; o que falta fica visível ([PENDENTE] segue no texto e o validador final bloqueia),
+    e os pedidos obrigatórios da skill são cobrados pelo auditor de consistência.
+    """
+    rel: dict[str, Any] = {"modo": "strict", "placeholders_mantidos": 0, "valores_alinhados": 0}
+    for s in secoes:
+        rel["placeholders_mantidos"] += len(_PLACEHOLDER_NO_CORPO.findall(str(s.get("content") or "")))
+    if soma_definida:
+        secoes = _alinhar_valor_da_causa(secoes, rel, soma_definida)
+    return secoes, rel
+
+
+def _estabilizar_o_que_ja_esteve_certo(secoes: list[dict[str, Any]], soma_definida: float | None = None) -> dict[str, int]:
     """O que alguma versão já acertou não pode sumir na seguinte.
 
     A v14 tinha pedidos processuais e nenhum [PENDENTE]. A v15 tinha comunicações.
     A v16 devolveu os três erros. Aqui o texto é corrigido, não só marcado.
+    Fluxo legado; com a camada jurídica em strict vale `_sinalizar_sem_reescrever`.
     """
     rel = {"placeholders_removidos": 0, "comunicacoes_inseridas": 0, "pedidos_inseridos": 0,
            "valores_alinhados": 0, "segundo_dano_moral_removido": 0}
@@ -464,6 +487,7 @@ def _estabilizar_o_que_ja_esteve_certo(secoes: list[dict[str, Any]]) -> dict[str
                     viu_moral = True
                 if _PLACEHOLDER_NO_CORPO.search(item) and not _REAIS_VALOR.search(item):
                     rel["placeholders_removidos"] += 1
+                    rel.setdefault("pedidos_removidos_sem_valor", []).append(" ".join(item.split())[:200])
                     continue
                 limpo, n = _PLACEHOLDER_NO_CORPO.subn("", item)
                 rel["placeholders_removidos"] += n
@@ -500,7 +524,7 @@ def _estabilizar_o_que_ja_esteve_certo(secoes: list[dict[str, Any]]) -> dict[str
         secoes = _anexar_frase(secoes, "Requer, ainda, " + "; ".join(faltas) + ".", "CLAIMS")
         rel["pedidos_inseridos"] = len(faltas)
 
-    return _alinhar_valor_do_dano_moral(secoes, rel), rel
+    return _alinhar_valor_do_dano_moral(secoes, rel, soma_definida), rel
 
 
 def _anexar_frase(secoes: list[dict[str, Any]], frase: str, codigo: str) -> list[dict[str, Any]]:
@@ -516,7 +540,7 @@ def _anexar_frase(secoes: list[dict[str, Any]], frase: str, codigo: str) -> list
     return novas
 
 
-def _alinhar_valor_do_dano_moral(secoes: list[dict[str, Any]], rel: dict[str, int]) -> list[dict[str, Any]]:
+def _alinhar_valor_do_dano_moral(secoes: list[dict[str, Any]], rel: dict[str, int], soma_definida: float | None = None) -> list[dict[str, Any]]:
     """O R$ do pedido de dano moral e o da quantificação passam a ser o mesmo número."""
     quant, capturando = "", False
     for s in secoes:
@@ -532,7 +556,7 @@ def _alinhar_valor_do_dano_moral(secoes: list[dict[str, Any]], rel: dict[str, in
                 quant += "\n" + linha
     valores = [_reais_float(v) for v in _REAIS_VALOR.findall(quant)]
     if not valores:
-        return secoes
+        return _alinhar_valor_da_causa(secoes, rel, soma_definida) if soma_definida else secoes
     alvo = max(valores)
     alvo_txt = _reais_br(alvo)
     novas = []
@@ -553,12 +577,14 @@ def _alinhar_valor_do_dano_moral(secoes: list[dict[str, Any]], rel: dict[str, in
         partes = _ITEM_PEDIDO.split(texto)
         texto = "".join(trocar_item(p) for p in partes)
         novas.append({**s, "content": texto})
-    return _alinhar_valor_da_causa(novas, rel)
+    return _alinhar_valor_da_causa(novas, rel, soma_definida)
 
 
-def _alinhar_valor_da_causa(secoes: list[dict[str, Any]], rel: dict[str, int]) -> list[dict[str, Any]]:
+def _alinhar_valor_da_causa(secoes: list[dict[str, Any]], rel: dict[str, int], soma_definida: float | None = None) -> list[dict[str, Any]]:
+    """`soma_definida` (soma determinística do ledger) prevalece sobre somar todo R$ do texto dos pedidos,
+    que inclui as bases dos cálculos e infla o total."""
     pedidos = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
-    soma = round(sum(_reais_float(v) for v in _REAIS_VALOR.findall(pedidos)), 2)
+    soma = round(float(soma_definida), 2) if soma_definida else round(sum(_reais_float(v) for v in _REAIS_VALOR.findall(pedidos)), 2)
     if not soma:
         return secoes
     soma_txt = _reais_br(soma)
@@ -606,10 +632,13 @@ def higienizar(
         rel["qualificacao_canonica"] = rel_quali
     secoes, n_alheio = _dado_alheio_na_abertura(secoes, plano.get("partes") or {}, texto_dos_autos)
     rel["dados_de_outro_caso_substituidos"] = n_alheio
-    secoes, n_irr = _corrigir_institutos(secoes)
-    rel["irdr_corrigido_para_irr"] = n_irr
-    secoes, rel_estavel = _estabilizar_o_que_ja_esteve_certo(secoes)
-    rel["estabilidade"] = rel_estavel
+    soma_definida = (plano.get("valor_da_causa_calculado") or {}).get("valor") or None
+    if plano.get("_juridico_estrito"):
+        secoes, rel["estabilidade"] = _sinalizar_sem_reescrever(secoes, soma_definida)
+    else:
+        secoes, n_irr = _corrigir_institutos(secoes)
+        rel["irdr_corrigido_para_irr"] = n_irr
+        secoes, rel["estabilidade"] = _estabilizar_o_que_ja_esteve_certo(secoes, soma_definida)
     secoes = [s for s in secoes if str(s.get("content") or "").strip() or str(s.get("label") or "").strip() == ""] or secoes
     secoes = _renumerar_capitulos(secoes)
     return secoes, rel

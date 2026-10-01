@@ -207,6 +207,7 @@ export interface Peticao {
   revisao_pendente?: RevisaoPendente | null;
   /** Independe do `status`: a revisão é interna, o protocolo aconteceu no tribunal. */
   protocolo?: ProtocoloDaPeticao | null;
+  trace?: { pipeline?: { juridico?: CamadaJuridica | null; modelo?: string } };
   jurimetria?: {
     disponivel: boolean;
     origem?: string;
@@ -234,6 +235,89 @@ export interface Peticao {
       url?: string;
     }>;
   };
+}
+
+/** Rastro da camada jurídica (PETICAO_PIPELINE_JURIDICO): fatos, teses, base jurídica, cálculos e auditores. */
+export type DecisaoDeTese =
+  | "SUPPORTED"
+  | "POTENTIAL_NEEDS_CONFIRMATION"
+  | "REJECTED_NO_FACTUAL_BASIS"
+  | "REJECTED_LEGAL"
+  | "REJECTED_STRATEGIC";
+
+export interface ComparacaoComLegado {
+  teses_sustentadas: number;
+  teses_sustentadas_ausentes_no_legado: string[];
+  teses_a_confirmar_sem_registro_no_legado: string[];
+  citacoes_no_legado: number;
+  citacoes_reprovadas_no_legado: Array<{ trecho: string; status: string; motivo: string; secao: string }>;
+  valor_da_causa: { legado_declarado: number[]; calculado_pela_camada: number | null };
+  pedidos: { legado: number; camada: number; so_na_camada: string[] };
+  veredito_se_fosse_strict: { pronta: boolean } | null;
+  bloqueios_que_o_strict_apontaria: string[];
+}
+
+export interface CamadaJuridica {
+  ativo: boolean;
+  modo?: "strict" | "shadow";
+  falhas?: string[];
+  comparacao_com_legado?: ComparacaoComLegado | null;
+  data_referencia: string;
+  etapas: Array<{
+    etapa: string;
+    modelo?: string;
+    ok: boolean;
+    erro?: string;
+    duracao_ms?: number;
+    chamadas?: number;
+    tokens_entrada_aprox?: number;
+    tokens_saida_aprox?: number;
+    consultas?: Array<{ tese: string; consulta: string; recuperadas: Array<{ id: string; score: number }>; superadas: string[] }>;
+    [chave: string]: unknown;
+  }>;
+  fatos: Array<{
+    id: string;
+    fato: string;
+    chave: string;
+    valor: string;
+    fonte: string;
+    documento: string;
+    pagina: string;
+    confianca: string;
+    estado: "confirmado" | "alegado" | "inferido";
+    contradicoes: string[];
+  }>;
+  contradicoes: Array<{ id: string; chave: string; versoes: Array<{ valor?: string; fontes?: string[]; detalhe?: string }> }>;
+  catalogo: Array<{ id: string; tema: string; arquivo: string }>;
+  teses: Array<{
+    id: string;
+    tese: string;
+    decisao: DecisaoDeTese;
+    rotulo?: string;
+    motivo: string;
+    rebaixada_por: string;
+    fatos_que_suportam: string[];
+    fatos_necessarios?: Array<{ fato: string; fato_id: string; presente: boolean; estado: string }>;
+    fatos_detalhados?: Array<{ id: string; estado: string; fato: string }>;
+    fatos_faltantes: string[];
+    prova: string[];
+    exige_pericia: boolean;
+    risco: string;
+    pendente_de_calculo?: boolean;
+  }>;
+  nao_avaliadas: string[];
+  calculos: Array<{ rubrica: string; valor: number; memoria: string[]; erro: string }>;
+  autoridades_por_tese: Record<string, Array<{ id: string; titulo: string; tipo: string; tribunal: string; status: string; verificada: boolean; origem: string }>>;
+  alertas_juridicos: string[];
+  tabelas: Record<string, { decisao: "USE_TABLE" | "NO_TABLE"; itens: number; motivo: string }>;
+  pendencias: string[];
+  valor_da_causa: { valor?: number; pedidos_somados?: string[] };
+  auditoria: {
+    veredito: { pronta: boolean; auditores: Record<string, { status: "PASS" | "FAIL"; bloqueios: number; alertas: number }> };
+    achados: Array<{ auditor: string; codigo: string; severidade: "bloqueia" | "alerta"; secao: string; trecho: string; detalhe: string }>;
+    authority_ids: string[];
+  } | null;
+  citacoes: Array<{ trecho: string; chave: string; status: string; authority_id: string | null; motivo: string; secao: string }> | null;
 }
 
 export interface Hipotese {

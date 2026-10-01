@@ -11,6 +11,10 @@ anexo alegado que não existe, número/data sem origem nos autos, marcador de pe
 
 Parâmetros `qualificacao` (campos que a abertura da peça exige, conforme `estrutura_peca.md` item 2) e `estrutura` (endereçamento) são lidos pelo `petition_linter`.
 
+`pedidos_obrigatorios` (nome + `padrao` sobre o texto sem acento e em minúsculas): com a camada jurídica em modo
+strict, o auditor de consistência bloqueia a peça que não traga algum deles. O sistema não escreve o pedido nem
+cita fundamento por conta própria: a fundamentação vem da base jurídica verificada e passa pelo gate de citação.
+
 Em síntese, o que estas regras exigem do redator: pedido de PAGAMENTO com valor e critério
 (art. 840, § 1º, da CLT); pedido declaratório/procedimental/probatório SEM valor; valor da
 causa igual à soma dos pedidos; nenhum tópico que conclua contra o cliente; nenhum capítulo
@@ -111,6 +115,13 @@ que exponha fragilidade do próprio caso; súmula/OJ/tema só se estiver no mate
    "minimo": "sal[áa]rios?[- ]m[íi]nimos?",
    "ultima_remuneracao": "[úu]ltim[oa] (?:sal[áa]rio|remunera[çc][ãa]o)"
   },
+  "pedidos_obrigatorios": [
+   {"nome": "comunicações processuais em nome do advogado constituído", "padrao": "comunicac"},
+   {"nome": "intimação exclusiva em nome do advogado constituído", "padrao": "intimacao exclusiva|exclusivamente em nome"},
+   {"nome": "citação da reclamada", "padrao": "\\bcita"},
+   {"nome": "rito processual", "padrao": "\\brito\\b"},
+   {"nome": "procedência dos pedidos", "padrao": "procedencia"}
+  ],
   "funcoes_de_conteudo": {
    "comunicacoes_processuais": "intima[cç][õo]es|publica[cç][õo]es|notifica[cç][õo]es|exclusivamente (?:ao|em nome d[oa]s?) advogad|sob pena de nulidade",
    "justica_gratuita": "justi[cç]a gratuita|hipossufici|art\\. 790",

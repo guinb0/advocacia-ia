@@ -65,7 +65,9 @@ def _resumo(texto: Any, limite: int) -> str:
     return " ".join(str(texto or "").split())[:limite]
 
 
-def consultas_do_plano(plano: dict[str, Any] | None, contexto: str, categoria: str) -> list[dict[str, str]]:
+def consultas_do_plano(
+    plano: dict[str, Any] | None, contexto: str, categoria: str, *, consulta_fixa_legada: bool = True,
+) -> list[dict[str, str]]:
     """Uma consulta GLOBAL (o caso em uma frase) e uma por tese do plano.
 
     Sem plano (o planejamento falhou) devolve só a global, feita do início do contexto — a
@@ -90,7 +92,7 @@ def consultas_do_plano(plano: dict[str, Any] | None, contexto: str, categoria: s
         consulta = f"{ancora}. {_resumo(t['tese'], 200)}. {sustentam}".strip()
         consultas.append({"tese": _resumo(t["tese"], 90), "consulta": consulta[:700]})
     blob = f"{categoria}\n{contexto[:4000]}"
-    if re.search(r"assalto|roubo|correios|\bect\b", blob, re.IGNORECASE):
+    if consulta_fixa_legada and re.search(r"assalto|roubo|correios|\bect\b", blob, re.IGNORECASE):
         consultas.append({
             "tese": "assalto em agência dos Correios",
             "consulta": "TST roubo ou assalto em agência dos Correios ECT atendente ou caixa dano moral responsabilidade",

@@ -633,6 +633,7 @@ def ausencia_falsa_de_documento_listado(
                 "Cite o(s) Documento NN do índice canônico; não marque como inexistente o que o ledger numera.",
             ))
             return saida
+    return saida
 
 
 def coerencia_juridica_minima(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
