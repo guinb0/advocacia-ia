@@ -1,0 +1,8284 @@
+[
+ {
+  "caminho": "/openapi.json",
+  "tipo": "Route",
+  "metodos": [
+   "GET",
+   "HEAD"
+  ],
+  "nome": "openapi"
+ },
+ {
+  "caminho": "/docs",
+  "tipo": "Route",
+  "metodos": [
+   "GET",
+   "HEAD"
+  ],
+  "nome": "swagger_ui_html"
+ },
+ {
+  "caminho": "/docs/oauth2-redirect",
+  "tipo": "Route",
+  "metodos": [
+   "GET",
+   "HEAD"
+  ],
+  "nome": "swagger_ui_redirect"
+ },
+ {
+  "caminho": "/redoc",
+  "tipo": "Route",
+  "metodos": [
+   "GET",
+   "HEAD"
+  ],
+  "nome": "redoc_html"
+ },
+ {
+  "caminho": "/metrics",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "metrics",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/config",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "configuracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/saude",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "saude_do_agente",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "dossie_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/contrato",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_contrato_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/sincronizar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "sincronizar",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "jurisdicao"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/entrevista/{entrevista_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_entrevista",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/analise",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "analisar",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pesquisa",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "pesquisar",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pesquisa/{pesquisa_ref}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "pesquisa",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "pesquisa_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/jurimetria",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "jurimetria",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "orgao"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/jurimetria",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "jurimetria_do_acervo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "assunto",
+    "ate",
+    "de",
+    "magistrado",
+    "orgao"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/jurimetria/linhas-argumentativas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "disparar_linhas_argumentativas",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/jurimetria/linhas-argumentativas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "linhas_argumentativas",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/jurimetria/contra-tese",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "disparar_contra_tese",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "hipotese_id"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/jurimetria/contra-tese",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "contra_tese",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/contradicoes/{contradicao_ref}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "resolver_contradicao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "contradicao_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "estado",
+    "justificativa",
+    "resolucao"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/estrategia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_estrategia",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/estrategia/{versao}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "decidir_estrategia",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "versao"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "aprovada",
+    "nota"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/estrategia/hipoteses/{hipotese_ref}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "decidir_hipotese",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "hipotese_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "aceita",
+    "enunciado"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "opcao"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao-fluxo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "estado_peticao_fluxo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao-fluxo/analise",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "analisar_peticao_fluxo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao-fluxo/estrategias",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "estrategias_peticao_fluxo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao-fluxo/completo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_analise_e_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao-fluxo/gerar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_peticao_fluxo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "opcao"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticoes-anexas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_peticoes_anexas",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticoes-anexas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_peticao_anexa",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/progresso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "progresso_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "desde"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "peca_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "peca_ref"
+   ],
+   "consulta": [
+    "formato"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_pacote_de_protocolo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo/conferencia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "conferir_pacote_de_protocolo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "montar_pacote_de_protocolo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/pacote-protocolo/com-avulsos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "montar_pacote_com_avulsos",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "avulsos",
+    "nomes_avulsos",
+    "selecao"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao-protocolo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "marcar_protocolo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/peticoes-protocoladas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_peticoes_protocoladas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "decidir_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "peca_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "aprovada",
+    "nota",
+    "secoes"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}/rascunho",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_rascunho_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "peca_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "secoes",
+    "titulo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}/revisar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "revisar_peticao_com_prompt",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "peca_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "generaliza",
+    "prompt"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/pesquisa-web",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "pesquisa_web",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pergunta"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/{peca_ref}/historico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_de_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "peca_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/local/revisoes/{revisao_id}/aceitar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "aceitar_revisao_pendente",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "revisao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/peticao/local/revisoes/{revisao_id}/descartar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "descartar_revisao_pendente",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "revisao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/peticoes/aprendizado/metricas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "metricas_de_aprendizado",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/estilo/pecas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_peca_de_estilo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "document_type",
+    "taxonomy_code"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/agente/estilo/perfil",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "perfil_de_estilo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "document_type",
+    "taxonomy_code",
+    "unidade"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/estilo/taxonomia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "taxonomia_de_estilo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/estilo/pecas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "pecas_de_estilo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "document_type",
+    "limit",
+    "offset",
+    "taxonomy_code"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/estilo/pecas/{peca_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "remover_peca_de_estilo",
+  "parametros": {
+   "caminho": [
+    "peca_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 204
+ },
+ {
+  "caminho": "/api/agente/estilo/configuracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "configuracao_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "document_type",
+    "taxonomy_code"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/estilo/configuracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_configuracao_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "payload"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/contrato/conferencia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "conferir_contrato",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "campos"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "perguntar_ao_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "conversation_id",
+    "message"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat/{conversa_ref}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "conversa_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "conversa_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat/propostas/{proposta_ref}/confirmar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "confirmar_proposta",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "proposta_ref"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/conversas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_conversas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/conversas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "abrir_conversa",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "caso_id"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/agente/conversas/{conversa_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "detalhar_conversa",
+  "parametros": {
+   "caminho": [
+    "conversa_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/conversas/{conversa_id}/mensagens",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "responder_na_conversa",
+  "parametros": {
+   "caminho": [
+    "conversa_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "caso_id",
+    "mensagem"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/conversas/{conversa_id}/caso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "fixar_caso_da_conversa",
+  "parametros": {
+   "caminho": [
+    "conversa_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "caso_id"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/conversas/{conversa_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "apagar_conversa",
+  "parametros": {
+   "caminho": [
+    "conversa_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 204
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "abrir_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "conversa_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/conversas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_conversas_do_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/conversas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "nova_conversa_do_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/conversas/{conversa_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_conversa_do_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "conversa_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 204
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "documentos_do_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/contexto",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "contexto_do_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/contexto/atualizar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "atualizar_contexto_do_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/mensagens",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "responder_no_chat_peticao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "conversa_id",
+    "mensagem"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/contextos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "adicionar_contexto_ao_chat",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "conversa_id",
+    "relevancia"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/acoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "executar_acao_do_chat",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "acao"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/agente/casos/{caso_id}/chat-peticao/eventos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "registrar_evento_do_chat",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "conversa_id",
+    "dados",
+    "tipo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/config",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "configuracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/clientes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "clientes",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "email",
+    "identificacao",
+    "limite",
+    "nome",
+    "offset",
+    "telefone"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/clientes/{cliente_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "cliente",
+  "parametros": {
+   "caminho": [
+    "cliente_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/processos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "processos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "cliente_id",
+    "fase",
+    "limite",
+    "nome",
+    "numero_processo",
+    "offset",
+    "responsavel"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/processos/{processo_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "processo",
+  "parametros": {
+   "caminho": [
+    "processo_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/processos/{processo_id}/historico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico",
+  "parametros": {
+   "caminho": [
+    "processo_id"
+   ],
+   "consulta": [
+    "situacao"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/processos/{processo_id}/movimentacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "movimentacoes",
+  "parametros": {
+   "caminho": [
+    "processo_id"
+   ],
+   "consulta": [
+    "origem"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/advbox/configuracoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "configuracoes_advbox",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/investigacao/coletar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "coletar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/investigacao/buscar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "buscar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "cnpj",
+    "consulta",
+    "limite",
+    "numero_processo"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/investigacao/analisar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "analisar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/jurisprudencia/providers",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "providers",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/jurisprudencia/plano",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "plano",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/jurisprudencia/precedentes/verificados",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "confirmar_precedente",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/localidades/ufs",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_ufs",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/localidades/municipios",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_municipios",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "uf"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/modulos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "catalogo_de_modulos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/perfis/matriz",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "matriz_de_perfis",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/perfis/historico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_de_perfis",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "limite"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/perfis/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_perfil",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/perfis/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "remover_perfil",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/perfis",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_perfis",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_usuarios",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "pagina",
+    "tamanho"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_usuario",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/usuarios/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "desativar_usuario",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_papel.<locals>.verificar",
+    "fechamento": [
+     "secretario"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/usuarios/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "editar_usuario",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_papel.<locals>.verificar",
+    "fechamento": [
+     "secretario"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/user/authenticate",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "autenticar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/user/authenticate/verify",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "confirmar_codigo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/user/authenticate/resend",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "reenviar_codigo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/user/logout",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "sair",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/user/my-account",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "minha_conta",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/user/change-password",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "trocar_senha",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/supervisao/entrevistas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "por_entrevistador",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "entrevistador",
+    "pagina",
+    "tamanho"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "supervisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/supervisao/entrevistas/{entrevista_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "transcricao",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "supervisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/supervisao/entrevistas/{entrevista_id}/auditoria",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "auditar_entrevista",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "supervisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   },
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/supervisao/entrevistas/{entrevista_id}/checklist",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "checklist",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "supervisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/supervisao/entrevistas/{entrevista_id}/avaliacao-google",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "corrigir_avaliacao_google",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "marcacao"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "supervisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/dados",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "panorama",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "metricas"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/dados/documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "documentos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "limite",
+    "origem",
+    "tribunal"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "metricas"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/dados/documentos/{fonte_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "documento",
+  "parametros": {
+   "caminho": [
+    "fonte_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "metricas"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/dados/prazos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "prazos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "metricas"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/atendimentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "iniciar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/atendimentos/{entrevista_id}/batida",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "batida",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/atendimentos/{entrevista_id}/solicitar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "solicitar",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/atendimentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "documentacao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/presenca",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "presenca",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "documentacao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   },
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/atendimentos/{entrevista_id}/assumir",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "assumir",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "documentacao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   },
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/documentacao/atendimentos/{entrevista_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chat/estado",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "estado",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chat/sessoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_sessoes",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chat/sessoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "abrir_sessao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/chat/sessoes/{sessao_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "detalhar_sessao",
+  "parametros": {
+   "caminho": [
+    "sessao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chat/sessoes/{sessao_id}/mensagens",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "perguntar",
+  "parametros": {
+   "caminho": [
+    "sessao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "caso_id",
+    "mensagem",
+    "modo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chat/sessoes/{sessao_id}/caso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "fixar_caso",
+  "parametros": {
+   "caminho": [
+    "sessao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "caso_id"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chat/sessoes/{sessao_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "apagar_sessao",
+  "parametros": {
+   "caminho": [
+    "sessao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 204
+ },
+ {
+  "caminho": "/api/chat/casos/{caso_id}/documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "documentos_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/operacao/alertas/{periodo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_alertas",
+  "parametros": {
+   "caminho": [
+    "periodo"
+   ],
+   "consulta": [
+    "pagina",
+    "tamanho"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "operacao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/operacao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "painel_operacional",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "direcao",
+    "ordem",
+    "pagina",
+    "tamanho"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "operacao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/avaliacao-google",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_avaliacao_google",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/status",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "status_conexao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/conectar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "conectar_whatsapp",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/desconectar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "desconectar_whatsapp",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/link-assinatura",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_link_assinatura",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/casos/{caso_id}/cobranca-documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_cobranca_documentos",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/casos/{caso_id}/cobranca-documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "configurar_cobranca_documentos",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/casos/{caso_id}/enviar-documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_documentos_agora",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/casos/{caso_id}/enviar-portal",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_portal",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/whatsapp/casos/{caso_id}/cobranca-documentos/teste-disparo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "disparar_teste_cobranca_documentos",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-documento",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_tipos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "incluir_inativos"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-documento/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_tipo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-documento/{codigo}/impacto",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "impacto_do_tipo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-documento/{codigo}/historico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_do_tipo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-documento",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_tipo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "glossario_documentos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/tipos-documento/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "editar_tipo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "glossario_documentos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-caso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_tipos_caso",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "incluir_inativos"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-caso/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_tipo_caso",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-caso/{codigo}/impacto",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "impacto_do_tipo_caso",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-caso/{codigo}/historico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_do_tipo_caso",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos-caso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_tipo_caso",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "tipos_caso"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/tipos-caso/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "editar_tipo_caso",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "tipos_caso"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/status",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "status",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/credenciais",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "salvar_credenciais",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/conectar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "conectar_drive",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/callback",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "callback",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "code",
+    "error",
+    "state"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/desconectar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "desconectar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "usuarios"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/testar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "testar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/drive/gravacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_gravacao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "nome"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/observabilidade/custos-api",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "custos_api_tempo_real",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "horas"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gastos-api",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "painel_gastos_api",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "gastos_api"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gastos-api/uso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "uso_das_apis",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "dias"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "gastos_api"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gastos-api/{fornecedor}/saldo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "informar_saldo_da_api",
+  "parametros": {
+   "caminho": [
+    "fornecedor"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "gastos_api"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/resumo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "resumo",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/configuracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "configuracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "normas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "categoria",
+    "status"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas/{document_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "norma",
+  "parametros": {
+   "caminho": [
+    "document_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/dispositivos/{version_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "dispositivo",
+  "parametros": {
+   "caminho": [
+    "version_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/autoridades/resolver",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "resolver_autoridade",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "autoridade"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/jurisprudencia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "jurisprudencia",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "status"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/sincronizacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "sincronizacoes",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "document_id",
+    "limite"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/alertas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "alertas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "abertos",
+    "limite"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/problemas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "problemas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas/{document_id}/verificar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "verificar_agora",
+  "parametros": {
+   "caminho": [
+    "document_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/normas/{document_id}/reindexar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "reindexar",
+  "parametros": {
+   "caminho": [
+    "document_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/anotacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "anotar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/alertas/{alerta_id}/resolver",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "resolver_alerta",
+  "parametros": {
+   "caminho": [
+    "alerta_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/acervo/jurisprudencia/importar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "importar_jurisprudencia",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "acervo_juridico"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "index",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tipos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "tipos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/roteiros",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_roteiros",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "pagina",
+    "tamanho"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/contrato",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_contrato",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/acervo-conteudistico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "estatisticas_acervo_conteudistico",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_modelo_visual_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual/logo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "logo_do_modelo_visual",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual/configuracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_configuracao_visual_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual/configuracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_configuracao_visual_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "entrada"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual/logo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_logo_do_modelo_visual",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual/preview",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "previa_do_modelo_visual",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_modelo_visual_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/modelos/peticao/visual",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_modelo_visual_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/skill",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_skill_de_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/peticao/skill",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_skill_de_peticao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skills-juridicas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_skills_juridicas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skills-modulos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_modulos_de_skill",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skills-modulos/{skill_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_modulo_de_skill",
+  "parametros": {
+   "caminho": [
+    "skill_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skills-juridicas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_skill_juridica",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/skills-juridicas/importar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "importar_skill_juridica",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/skill-peticao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/skill-peticao/ativa",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "trocar_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/arquivos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "arquivos_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "skill_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "salvar_arquivo_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/versoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "skill_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/versoes/{versao_id}/restaurar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "restaurar_versao_da_skill_de_geracao",
+  "parametros": {
+   "caminho": [
+    "versao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "corpo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "agente"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/skill-peticao/pacote",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_skill_de_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "skill_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/saude/transcricao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "saude_da_transcricao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_modelos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_algum_modulo.<locals>.verificar",
+    "fechamento": [
+     [
+      "contratos",
+      "modelos_contrato"
+     ]
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/{codigo}/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_modelo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_algum_modulo.<locals>.verificar",
+    "fechamento": [
+     [
+      "contratos",
+      "modelos_contrato"
+     ]
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/{codigo}/restaurar-anterior",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "restaurar_modelo_anterior",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_algum_modulo.<locals>.verificar",
+    "fechamento": [
+     [
+      "contratos",
+      "modelos_contrato"
+     ]
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/modelos/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_modelo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_algum_modulo.<locals>.verificar",
+    "fechamento": [
+     [
+      "contratos",
+      "modelos_contrato"
+     ]
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/modelos/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_modelo",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_algum_modulo.<locals>.verificar",
+    "fechamento": [
+     [
+      "contratos",
+      "modelos_contrato"
+     ]
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/contrato/campos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "campos_do_contrato",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entrevista/relatorio/jobs",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enfileirar_relatorio",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/entrevista/relatorio",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_relatorio",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entrevista/escuta",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "escutar_entrevista",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entrevista/processar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "processar_entrevista",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entrevista/analise",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "analisar_resposta",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entrevista/recomendacao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "recomendar_entrevista",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinatura/config",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "config_assinatura",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinatura/provedores",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_provedores_assinatura",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "contratos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinatura/provedores/{provedor}/token",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "salvar_token_provedor_assinatura",
+  "parametros": {
+   "caminho": [
+    "provedor"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "contratos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinatura/provedores/{provedor}/testar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "testar_provedor_assinatura",
+  "parametros": {
+   "caminho": [
+    "provedor"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "contratos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinatura/provedores/ativar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "ativar_provedor_assinatura",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "contratos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinatura/navegador",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_assinatura_pelo_site",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "cliente_email",
+    "cliente_nome",
+    "cliente_whatsapp"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/assinatura/navegador/whatsapp",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "reenviar_link_assinatura_site",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/assinatura/navegador/documento",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_documento_para_assinatura_site",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/assinatura/navegador/todos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_todos_para_assinatura_site",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/contrato/assinatura",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_contrato_para_assinatura",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/assinaturas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_assinaturas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "caso_id",
+    "cliente",
+    "cpf"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinaturas/{assinatura_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_assinatura",
+  "parametros": {
+   "caminho": [
+    "assinatura_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinaturas/{assinatura_id}/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_contrato_assinado",
+  "parametros": {
+   "caminho": [
+    "assinatura_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinaturas/{assinatura_id}/caso",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "vincular_assinatura",
+  "parametros": {
+   "caminho": [
+    "assinatura_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "caso_id"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/assinaturas/{assinatura_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_assinatura",
+  "parametros": {
+   "caminho": [
+    "assinatura_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/cep/{cep}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "consultar_cep",
+  "parametros": {
+   "caminho": [
+    "cep"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/cpf",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "consultar_cpf",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/roteiros/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_roteiro",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/roteiros/importar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "importar_roteiro",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "roteiros"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/roteiros",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "salvar_roteiro",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "roteiros"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/roteiros/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_roteiro",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "roteiros"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/categorias",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_categorias",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/categorias/{codigo}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_categoria",
+  "parametros": {
+   "caminho": [
+    "codigo"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/saude",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "saude",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "fila"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/saude/fila",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "saude_da_fila",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/config",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "config",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/eu",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "eu",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tactiq/status",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "tactiq_status",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "verificar"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tactiq/ferramentas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "tactiq_ferramentas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tactiq/reunioes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "tactiq_reunioes",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tactiq/reunioes/{reuniao_id}/transcricao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "tactiq_transcricao",
+  "parametros": {
+   "caminho": [
+    "reuniao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tactiq/conectar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "tactiq_conectar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/tactiq/callback",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "tactiq_callback",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "code",
+    "error",
+    "error_description",
+    "state"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/aquecer",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "aquecer",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/extrair",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "extrair",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "idioma",
+    "tipo"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/extrair/jobs",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enfileirar_extracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "idioma",
+    "tipo"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/jobs/{job_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "consultar_job",
+  "parametros": {
+   "caminho": [
+    "job_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/triagem",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "triar_entrevista",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "texto"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chamada/config",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "config_chamada",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chamada/sala",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_sala",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "payload"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/analise-documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "analisar_documentos_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/analise-documental",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "iniciar_analise_documental",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/analise-documental",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_analise_documental",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/analise-documental/perguntas/{pergunta_id}/resposta",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "responder_pergunta_documental",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "pergunta_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "payload"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/organizacao/plano",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "plano_de_organizacao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/organizacao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "organizacao_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/organizacao/confirmar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "confirmar_organizacao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/analise-documental/continuar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "continuar_para_a_peca",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/insights/{fato_id}/estado",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "definir_estado_insight",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "fato_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "payload"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/diagnostico/pureza-da-skill",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "diagnostico_pureza_da_skill",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "categoria_codigo",
+    "categoria_nome",
+    "texto_caso"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/diagnostico/geracao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "diagnostico_da_geracao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "caso_id"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/jurimetria",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "jurimetria_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "uf"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/chamada/sala/{sala_id}/token",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "token_da_sala",
+  "parametros": {
+   "caminho": [
+    "sala_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/ws/chamada/{sala_id}",
+  "tipo": "APIWebSocketRoute",
+  "metodos": [],
+  "nome": "ws_chamada",
+  "parametros": {
+   "caminho": [
+    "sala_id"
+   ],
+   "consulta": [
+    "papel"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/estrategia/jobs",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enfileirar_estrategia",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/estrategia",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "estrategia",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_caso",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "categoria",
+    "cliente",
+    "observacao",
+    "skill_juridica_id",
+    "telefone",
+    "tipo_acao"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/qualificacao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "gravar_qualificacao",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_casos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/carteira",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "fila_da_carteira",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "busca",
+    "categoria",
+    "ordenar",
+    "pagina",
+    "situacao",
+    "tamanho"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/follow-up",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "relatorio_follow_up",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "casos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/ligacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "list_case_calls",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "casos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/ligacoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "register_case_call",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "casos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/revisao/fila",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "revisao_fila",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "revisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/revisao/{caso_id}/iniciar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "revisao_iniciar",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "revisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/revisao/{caso_id}/concluir",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "revisao_concluir",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "revisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/revisao/metricas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "revisao_metricas",
+  "parametros": {
+   "caminho": [],
+   "consulta": [
+    "minhas"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "revisao"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/painel",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "painel_do_caso_analitico",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/panorama",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "panorama_do_escritorio",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "atualizar_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "categoria",
+    "cliente",
+    "observacao",
+    "skill_juridica_id",
+    "telefone"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/portal",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "gerar_portal",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/portal",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "consultar_portal",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/pedido",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "pedido_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "incluir_opcionais"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos/pendentes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "documentos_pendentes_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "incluir_opcionais"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos/busca",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "buscar_nos_documentos_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [
+    "q"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_documento",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "confirmar_duplicidade",
+    "idioma",
+    "item",
+    "usar_para_rg_e_cpf"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos/lote",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_documentos_em_lote",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivos",
+    "idioma"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/importar-zip",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "criar_caso_por_zip",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "categoria",
+    "cliente",
+    "idioma",
+    "skill_juridica_id",
+    "telefone"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 202
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}/itens",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PATCH"
+  ],
+  "nome": "reatribuir_entrega",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "confirmar_duplicidade",
+    "itens",
+    "motivo",
+    "tipo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos/teste",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_documento_de_teste",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "item",
+    "texto"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/entrevista",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "enviar_entrevista",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "entrevistador",
+    "realizada_em"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/entrevista-ao-vivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "PUT"
+  ],
+  "nome": "gravar_entrevista_ao_vivo",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "dados"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/entrevistas",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_entrevistas",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/entrevista/{entrevista_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_entrevista",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/entrevista/{entrevista_id}/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_entrevista",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "guardar_gravacao_temporaria",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "entrevista_id",
+    "nome",
+    "tipo"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_gravacoes_temporarias",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/pedacos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "guardar_pedaco_de_video",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "entrevista_id",
+    "nome",
+    "ordem",
+    "sessao_id"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/videos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_videos_em_pedacos",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/videos/{sessao_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_video_em_pedacos",
+  "parametros": {
+   "caminho": [
+    "sessao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/trechos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "guardar_trecho_de_transcricao",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/transcricoes",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "listar_transcricoes_parciais",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/transcricoes/{entrevista_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_transcricao_parcial",
+  "parametros": {
+   "caminho": [
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/gravacoes-temporarias/{gravacao_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_gravacao_temporaria",
+  "parametros": {
+   "caminho": [
+    "gravacao_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/entrevista/{entrevista_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_entrevista",
+  "parametros": {
+   "caminho": [
+    "caso_id",
+    "entrevista_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/identidade-unificada",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "vincular_identidade_unificada",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "entrega_id"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/portal/{token}/entrar",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "portal_entrar",
+  "parametros": {
+   "caminho": [
+    "token"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "senha"
+   ]
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/portal/{token}/situacao",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "portal_situacao",
+  "parametros": {
+   "caminho": [
+    "token"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/portal/{token}/documentos",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "portal_enviar",
+  "parametros": {
+   "caminho": [
+    "token"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivo",
+    "item"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/portal/{token}/documentos/lote",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "portal_enviar_lote",
+  "parametros": {
+   "caminho": [
+    "token"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "arquivos"
+   ]
+  },
+  "dependencias": [],
+  "status_code": 201
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "obter_entrega",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}/leitura",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "ler_documento",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}/arquivo",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_arquivo_entrega",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [
+    "download"
+   ],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}/arquivo.pdf",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_arquivo_entrega_pdf",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos.zip",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_documentos_do_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}/historico",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "historico_da_entrega",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos.zip",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "baixar_selecao_de_documentos",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "casos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/documentos.pdf",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "baixar_selecao_de_documentos_em_pdf",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": [
+    "pedido"
+   ]
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.exigir_modulo.<locals>.verificar",
+    "fechamento": [
+     "casos"
+    ],
+    "dependencias": [
+     {
+      "chamada": "app.auth.usuario_atual",
+      "fechamento": [],
+      "dependencias": []
+     }
+    ]
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}/tentar-novamente",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "tentar_novamente_entrega",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/casos/{caso_id}/tentar-novamente",
+  "tipo": "APIRoute",
+  "metodos": [
+   "POST"
+  ],
+  "nome": "tentar_novamente_caso",
+  "parametros": {
+   "caminho": [
+    "caso_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/entregas/{entrega_id}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "excluir_entrega",
+  "parametros": {
+   "caminho": [
+    "entrega_id"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [
+   {
+    "chamada": "app.auth.usuario_atual",
+    "fechamento": [],
+    "dependencias": []
+   }
+  ],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/temp/{nome}",
+  "tipo": "APIRoute",
+  "metodos": [
+   "GET"
+  ],
+  "nome": "baixar_temp",
+  "parametros": {
+   "caminho": [
+    "nome"
+   ],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ },
+ {
+  "caminho": "/api/temp",
+  "tipo": "APIRoute",
+  "metodos": [
+   "DELETE"
+  ],
+  "nome": "limpar",
+  "parametros": {
+   "caminho": [],
+   "consulta": [],
+   "cabecalho": [],
+   "cookie": [],
+   "corpo": []
+  },
+  "dependencias": [],
+  "status_code": null
+ }
+]

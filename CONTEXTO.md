@@ -194,7 +194,7 @@ Login: `guinb` / `123`.
 ## Como está organizado
 
 ```
-app/
+back/app/
   main.py         rotas; middleware de auth por allowlist
   contrato.py     preenche o modelo .docx do escritório (não redige cláusula)
   assinatura.py   manda assinar na ZapSign e acompanha quem já assinou
@@ -206,13 +206,13 @@ app/
   portal.py       senha/sessão do portal do cliente
   gravacao.py     guarda o áudio da entrevista e o converte em .mp4
   armazenamento.py  SQLite
-frontend/
+front/src/
   app/page.tsx              Carteira · Checklist · análise avulsa
   app/portal/[token]/       portal público do cliente
   components/Carteira.tsx   tela principal
   lib/triagem, auth, api    clientes e hooks
-sql/001_criar_banco_vetorial.sql   schema do pgvector (já aplicado)
-tests/avaliar_triagem.py           mede a triagem com relatos gerados por LLM
+back/sql/001_criar_banco_vetorial.sql   schema do pgvector (já aplicado)
+back/tests/avaliar_triagem.py      mede a triagem com relatos gerados por LLM
 ```
 
 ---
@@ -396,7 +396,7 @@ depois obriga a recriar as colunas e reindexar.**
 docker compose up -d keycloak  # só o Keycloak
 
 .venv\Scripts\python.exe -m tests.avaliar_triagem 4   # mede a triagem
-cd frontend; npm run typecheck; npm run build
+cd front; npm run typecheck; npm run build
 ```
 
 **Repositórios:** GitLab `ia/advocacia-ia` (origin) e GitHub `guinb0/advocacia-ia`
@@ -465,7 +465,7 @@ Whisper descartava a resposta inteira. A causa era o `AudioContext` forçado a
 `MediaStreamAudioSourceNode` de faixa remota devolve silêncio, e o microfone
 escondia o defeito porque o `getUserMedia` capta já na taxa do contexto. Corrigido
 rodando o contexto na taxa nativa e reamostrando para 16 kHz **no worklet**
-(`frontend/public/worklet-pcm.js`, interpolação linear). Prova em
+(`front/public/worklet-pcm.js`, interpolação linear). Prova em
 `tests.test_worklet`: um Chrome real, senoide de 440 Hz num contexto a 48 kHz, e
 a saída volta não-silenciosa e ainda a 440 Hz — o que só fecha se a taxa de saída
 for mesmo 16 kHz. Não cobre a faixa remota em si (exigiria um segundo par na
@@ -922,7 +922,7 @@ não manda `stop`.
 
 ## Vídeo da entrevista — grava no navegador, NÃO fica guardado — 14/08/2026
 
-`frontend/lib/gravacaoVideo.ts` + `components/VideoDaEntrevista.tsx`. Botão no
+`front/lib/gravacaoVideo.ts` + `components/VideoDaEntrevista.tsx`. Botão no
 alto do roteiro, ao lado de "Começar a entrevista". Não há rota, não há pasta e
 não há upload: **o vídeo existe só na aba**, e quem não baixar, perde.
 
@@ -1004,7 +1004,7 @@ vez de falhar.
 
 ## Condução da entrevista pelo roteiro — 15/08/2026
 
-`frontend/components/Conducao.tsx`. O escritório fechou a regra numa frase: "não
+`front/components/Conducao.tsx`. O escritório fechou a regra numa frase: "não
 é o que o cliente quer ou nós entendemos — tem que ser o que o advogado
 determina". A tela tinha escuta e painel, mas ninguém dizia qual era a **próxima
 pergunta**: o entrevistador escolhia entre 86 enunciados enquanto o cliente
@@ -1216,7 +1216,7 @@ camada normativa.
 
 `app/agente/` liga o Acervo ao serviço `ia-juridica`, que guarda o **Case State**:
 fato com proveniência, classificação, pendência de playbook e pesquisa de
-jurisprudência. A tela nova é o **Dossiê do caso** (`frontend/src/components/admin/Dossie.tsx`),
+jurisprudência. A tela nova é o **Dossiê do caso** (`front/src/components/admin/Dossie.tsx`),
 alcançada pela barra de abas dentro do caso.
 
 ```

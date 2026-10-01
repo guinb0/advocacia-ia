@@ -5,13 +5,26 @@ papelada completa**: conduz o roteiro, transcreve a voz do cliente, sugere o tip
 de ação, preenche o contrato de honorários, manda assinar, e então cobra e
 confere os documentos um a um.
 
-Roda na máquina do advogado. Os arquivos do cliente ficam em `dados/` e não saem
+Roda na máquina do advogado. Os arquivos do cliente ficam em `back/dados/` e não saem
 dali — o que sai para fora são só quatro coisas, todas opcionais: o texto da
 entrevista para o modelo de linguagem, o CEP para a base pública, o `.docx` para
 a assinatura eletrônica, e a consulta ao banco de precedentes.
 
 **Stack:** FastAPI + PaddleOCR + faster-whisper no backend, Next.js 16 + React 19
 no frontend, SQL Server local e um PostgreSQL com pgvector para os precedentes.
+
+## As três pastas
+
+| pasta | o que tem |
+|---|---|
+| `front/` | a tela (Next.js). Tudo o que o navegador baixa |
+| `back/` | todo o Python: a API (`back/app`), os workers, testes, scripts, SQL e docs |
+| `ia/` | o que ensina a IA: as skills de petição e de documentos, os `.skill.zip` e a sincronização do RAG |
+
+Na raiz fica só o que é do projeto inteiro: `iniciar.ps1`, `.env`, Dockerfile,
+docker-compose, CI, `observability/` e `deploy/`. A imagem de produção continua
+com o layout de antes (o Dockerfile remonta tudo sob `/app`), então deploy,
+compose e Celery não mudaram.
 
 ## O fluxo
 
@@ -45,11 +58,11 @@ Nada de status marcado à mão: tudo é derivado dos arquivos entregues.
 
 | você quer | leia |
 |---|---|
-| rodar o projeto pela primeira vez | [`docs/COMECANDO.md`](docs/COMECANDO.md) |
+| rodar o projeto pela primeira vez | [`back/docs/COMECANDO.md`](back/docs/COMECANDO.md) |
 | entender o que foi decidido e por quê | [`CONTEXTO.md`](CONTEXTO.md) |
-| usar ou consertar a chamada por vídeo | [`docs/CHAMADA.md`](docs/CHAMADA.md) |
-| entender o chat da petição, no Dossiê | [`docs/CHAT-DA-PETICAO.md`](docs/CHAT-DA-PETICAO.md) |
-| saber a direção visual da interface | [`docs/GUIA-VISUAL.md`](docs/GUIA-VISUAL.md) |
+| usar ou consertar a chamada por vídeo | [`back/docs/CHAMADA.md`](back/docs/CHAMADA.md) |
+| entender o chat da petição, no Dossiê | [`back/docs/CHAT-DA-PETICAO.md`](back/docs/CHAT-DA-PETICAO.md) |
+| saber a direção visual da interface | [`back/docs/GUIA-VISUAL.md`](back/docs/GUIA-VISUAL.md) |
 | ver o que cada rota faz, interativo | <http://127.0.0.1:8100/docs> |
 
 O **`CONTEXTO.md`** é o mais importante dos quatro. Ele registra o estado real do
@@ -63,7 +76,7 @@ alguma coisa que pareça estranha, procure lá: é provável que já tenha sido 
 
 **Primeira vez no projeto?** O passo a passo completo — pré-requisitos,
 configuração e o que fazer quando não sobe — está em
-[`docs/COMECANDO.md`](docs/COMECANDO.md).
+[`back/docs/COMECANDO.md`](back/docs/COMECANDO.md).
 
 ```powershell
 cd advocacia-ia
@@ -104,8 +117,8 @@ A barra de status no topo da página mostra quando o modelo está pronto.
 Para subir cada um manualmente:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8100 --timeout-keep-alive 65
-cd frontend; npm run dev
+cd back; ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8100 --timeout-keep-alive 65
+cd front; npm run dev   # em outro terminal, a partir da raiz
 ```
 
 O `--timeout-keep-alive 65` importa: o padrão do uvicorn é 5s, curto demais para o pool
@@ -114,7 +127,7 @@ servidor e quebraria a requisição com `socket hang up` (ECONNRESET).
 
 ### Sem Node
 
-`static/index.html` é a mesma interface em HTML/JS puro, servida pelo próprio FastAPI
+`back/static/index.html` é a mesma interface em HTML/JS puro, servida pelo próprio FastAPI
 em <http://127.0.0.1:8100>. Serve de plano B quando só o Python está disponível.
 
 ---
@@ -227,15 +240,15 @@ Por isso o JSON traz os dois: `tipo.codigo` (usado na extração) e `tipo.detect
 | Caminho | O quê |
 |---|---|
 | volume `sqlserver_data` | SQL Server local: casos, entregas e o índice das assinaturas |
-| `dados/casos/<id>/` | os arquivos que o cliente mandou |
-| `dados/contratos/<id>.pdf` | contratos assinados, baixados da ZapSign |
-| `dados/.portal-segredo` | assina as sessões do portal; sorteado no 1º boot |
+| `back/dados/casos/<id>/` | os arquivos que o cliente mandou |
+| `back/dados/contratos/<id>.pdf` | contratos assinados, baixados da ZapSign |
+| `back/dados/.portal-segredo` | assina as sessões do portal; sorteado no 1º boot |
 | `~/.paddlex/official_models` | modelos do OCR (~100 MB), fora do projeto |
 
-`dados/` está no `.gitignore` — **documento de cliente nunca vai para o repositório**.
+`back/dados/` está no `.gitignore` — **documento de cliente nunca vai para o repositório**.
 Backup é copiar essa pasta; apagar um caso pela interface apaga os arquivos junto.
 
-Os contratos assinados ficam **fora** de `dados/casos/` de propósito: o contrato é
+Os contratos assinados ficam **fora** de `back/dados/casos/` de propósito: o contrato é
 assinado na entrevista, antes de o caso existir, e apagar um caso não pode levar
 junto a via assinada.
 
@@ -246,10 +259,10 @@ nada de cliente — é consultado, não alimentado.
 ## Categorias e checklists
 
 Cada tipo de ação tem um checklist de documentos a cobrar do cliente. As cinco do
-escritório ficam em [`app/categorias.py`](app/categorias.py), transcritas dos documentos
-que ele manda em `.docx` (guardados em [`docs/`](docs/)). As demais são **cadastro**: o
+escritório ficam em [`back/app/categorias.py`](back/app/categorias.py), transcritas dos documentos
+que ele manda em `.docx` (guardados em [`back/docs/`](back/docs/)). As demais são **cadastro**: o
 gestor cria a ação pela tela *Tipos de caso* (ver
-[`app/tipos_caso.py`](app/tipos_caso.py)), monta o checklist escolhendo tipos do
+[`back/app/tipos_caso.py`](back/app/tipos_caso.py)), monta o checklist escolhendo tipos do
 glossário e escreve as pistas que a triagem usa — sem mexer no código.
 
 Do código, conferidas contra o `.docx`:
@@ -270,7 +283,7 @@ se o arquivo enviado é mesmo o documento pedido.
 ### Transcrever um checklist novo
 
 ```powershell
-.\.venv\Scripts\python.exe -m tests.ler_checklist_docx "docs\CHECK LIST ....docx"
+cd back; ..\.venv\Scripts\python.exe -m tests.ler_checklist_docx "docs\CHECK LIST ....docx"
 ```
 
 Ele imprime cada linha marcando `[X]` para os itens em vermelho. Transcreva o resultado
@@ -389,7 +402,7 @@ O caminho óbvio seria proxiar `/api` do Next para o Python com `rewrites`. Não
   `proxyClientMaxBodySize` (10MB por padrão) **trunca o corpo em silêncio** em vez de
   rejeitar: o backend receberia uma imagem corrompida sem ninguém perceber.
 
-Então o frontend fala direto com o FastAPI (`lib/api.ts`), que habilita CORS. Para
+Então o frontend fala direto com o FastAPI (`lib/api/base.ts`), que habilita CORS. Para
 apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 
 ### Resposta (resumida)
@@ -421,7 +434,8 @@ apontar para outro host, defina `NEXT_PUBLIC_OCR_API`.
 PASS/FALHA, com a explicação do que cada asserção protege.
 
 ```powershell
-$py = ".\.venv\Scripts\python.exe"
+cd back
+$py = "..\.venv\Scripts\python.exe"
 & $py -m tests.test_validators       # dígitos verificadores
 & $py -m tests.test_categorias       # checklist do código vs. o .docx do escritório
 & $py -m tests.test_casos            # fluxo do caso (banco temporário)
@@ -443,7 +457,7 @@ $py = ".\.venv\Scripts\python.exe"
 Nenhum toca serviço externo: DeepSeek, ZapSign e pgvector entram dublados. Rodam
 offline e não gastam crédito.
 
-Frontend: `cd frontend; npm run typecheck; npm run build`.
+Frontend: `cd front; npm run typecheck; npm run build`.
 
 Ferramentas, não testes:
 
@@ -478,8 +492,9 @@ da mãe vindo contaminado com a categoria da coluna vizinha, e o nº de registro
 ## Estrutura
 
 ```
-app/                     backend (FastAPI)
-  main.py                rotas; middleware de auth por allowlist
+back/app/                backend (FastAPI)
+  main.py                monta o app: ciclo de vida, middleware de auth por allowlist, routers
+  rotas/                 as rotas HTTP, um router por área (casos, documentos, entrevista...)
   auth.py                assina e valida o JWT da sessão. Sem JWT_SECRET = auth desligada
   usuarios.py            contas (tabela `acervo_usuarios`), login, logout e troca de senha
   ── entrevista
@@ -509,7 +524,7 @@ app/                     backend (FastAPI)
   pdf.py                 renderiza PDF para imagem antes do OCR
   chamada.py             sorteia a sala da chamada
 
-frontend/                Next.js 16 (App Router) + React 19
+front/src/               Next.js 16 (App Router) + React 19
   app/page.tsx           Carteira · Checklist · análise avulsa
   app/portal/[token]/    o que o cliente vê para mandar documentos
   app/chamada/[sala]/    o que o cliente vê para entrar na chamada
@@ -522,21 +537,26 @@ frontend/                Next.js 16 (App Router) + React 19
     Panorama.tsx         o escritório inteiro — módulo próprio, aberto pela navegação
     Carteira · Checklist · ItemChecklistLinha · PedidoCliente · Resultado
     Retratos.tsx         os participantes da chamada
-  lib/api.ts             cliente HTTP do backend
+  lib/api/               cliente HTTP do backend, um arquivo por domínio
+  lib/telas.ts           registro das telas (rótulo, ícone, módulo, moldura)
   lib/transcricao.ts     captura de áudio e streaming para o Whisper
   lib/chamadaJitsi.ts    a chamada sobre lib-jitsi-meet
   lib/types.ts           espelho tipado do JSON da API
 
-scripts/                 rodados à mão, com `python -m scripts.<nome>`
+back/scripts/            rodados à mão, de dentro de back/, com `python -m scripts.<nome>`
   estado_rag.py          diagnóstico do banco vetorial
   ingerir_jurimetria.py  importa processos do TRT8/TST/DJEN/DEJT
   vetorizar_pendentes.py preenche os embeddings em lotes retomáveis
-sql/                     migrações do pgvector, aplicadas em ordem
-docs/                    guias, checklists do escritório e o contrato oficial
-tests/                   cada arquivo roda sozinho e imprime PASS/FALHA
-dados/                   arquivos dos clientes — FORA do git
-tmp/                     JSON/XML temporários da análise avulsa (TTL 30 min)
-static/index.html        mesma UI em HTML puro (plano B sem Node)
+back/sql/                migrações do pgvector, aplicadas em ordem
+back/docs/               guias, checklists do escritório e o contrato oficial
+back/tests/              cada arquivo roda sozinho e imprime PASS/FALHA
+back/dados/              arquivos dos clientes — FORA do git
+back/tmp/                JSON/XML temporários da análise avulsa (TTL 30 min)
+back/static/index.html   mesma UI em HTML puro (plano B sem Node)
+
+ia/skills/               skills em arquivo: petição trabalhista e análise documental
+ia/*.skill.zip           a skill jurídica que a API instala ao subir
+ia/sincronizar-rag.ps1   ingestão + vetorização do RAG, com retentativas
 ```
 
 ---
@@ -572,14 +592,14 @@ corretamente, então compensa. A primeira chamada do processo carrega os modelos
 ## Limitações conhecidas
 
 - **O contrato é preenchido, não redigido.** As cláusulas, percentuais, foro e as
-  inscrições na OAB saem do `docs/CONTRATO*.docx` palavra por palavra — nenhum
+  inscrições na OAB saem do `back/docs/CONTRATO*.docx` palavra por palavra — nenhum
   modelo de linguagem escreve nada ali. Trocar de versão é soltar o arquivo novo
-  em `docs/`; o mais recente vence. Nome completo e CPF válido são obrigatórios:
+  em `back/docs/`; o mais recente vence. Nome completo e CPF válido são obrigatórios:
   sem qualquer um deles nenhum arquivo é criado. Outro campo que a entrevista
   não respondeu sai entre colchetes, à vista, em vez de em branco.
 - **O modelo do contrato não está no repositório.** Este repo é público, e o
   arquivo traz a tabela de honorários, o CNPJ e as inscrições na OAB do
-  escritório. Para gerar contratos, copie o `.docx` oficial para `docs/` — sem
+  escritório. Para gerar contratos, copie o `.docx` oficial para `back/docs/` — sem
   ele, a rota `/api/contrato` responde 503 com a explicação e o
   `tests.test_contrato` pula a parte que depende do arquivo.
 

@@ -19,6 +19,11 @@
 #
 # ARGs `environment` e `VERSION` vem do pipeline (build_args_additional e
 # build_args_version), no mesmo formato do dflegal.
+#
+# O REPOSITORIO E DIVIDIDO EM front/, back/ E ia/; A IMAGEM, NAO.
+# Os COPY abaixo remontam o layout de sempre sob /app (app/, app/skills/,
+# scripts/, sql/, frontend/...), e por isso nenhum `command` dos composes, nome
+# de task do Celery ou caminho de volume precisou mudar com a divisao.
 
 # ---------------------------------------------------------------- frontend
 FROM node:22-slim AS frontend_builder
@@ -26,17 +31,17 @@ ARG environment
 ARG VERSION
 # NEXT_PUBLIC_* e embutido no bundle NO BUILD — runtime nao muda mais.
 # Vazios de proposito: o front usa o host de onde a pagina foi aberta (ver
-# frontend/src/lib/api.ts). So preencha via build_args_additional quando api e
+# front/src/lib/api/base.ts). So preencha via build_args_additional quando api e
 # pagina morarem em DOMINIOS diferentes atras do nginx.
 ARG NEXT_PUBLIC_OCR_API=""
 ARG NEXT_PUBLIC_TRANSCRICAO_API=""
 ARG NEXT_PUBLIC_JITSI_URL=""
 
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json ./
+COPY front/package.json front/package-lock.json ./
 RUN npm ci
 
-COPY frontend/ .
+COPY front/ .
 ENV NEXT_TELEMETRY_DISABLED=1 \
     BUILD_STANDALONE=1 \
     NEXT_PUBLIC_OCR_API=${NEXT_PUBLIC_OCR_API} \
@@ -82,7 +87,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=frontend_builder /usr/local/bin/node /usr/local/bin/node
 
 WORKDIR /app
-COPY requirements.txt .
+COPY back/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Chromium do Playwright para o envio de assinatura pelo SITE do ZapSign (plano
@@ -95,14 +100,17 @@ RUN python -m playwright install --with-deps chromium \
     && chmod -R a+rx /opt/playwright \
     && rm -rf /var/lib/apt/lists/*
 
-COPY app ./app
-COPY scripts ./scripts
-COPY sql ./sql
-COPY static ./static
-COPY escritorio-trabalhista.skill.zip ./escritorio-trabalhista.skill.zip
+COPY back/app ./app
+COPY back/scripts ./scripts
+COPY back/sql ./sql
+COPY back/static ./static
+# As skills voltam para dentro do pacote, onde app/caminhos.py as procura
+# primeiro; no repositorio elas moram em ia/.
+COPY ia/skills ./app/skills
+COPY ia/escritorio-trabalhista.skill.zip ./escritorio-trabalhista.skill.zip
 # docs/ nao e documentacao morta: os .docx oficiais (contrato, procuracao,
 # declaracao) sao lidos dali por app/contrato.py na geracao da papelada.
-COPY docs ./docs
+COPY back/docs ./docs
 
 COPY --from=frontend_builder /app/frontend/.next/standalone ./frontend
 COPY --from=frontend_builder /app/frontend/.next/static ./frontend/.next/static

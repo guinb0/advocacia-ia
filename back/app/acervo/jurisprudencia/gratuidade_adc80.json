@@ -1,0 +1,52 @@
+[
+  {
+    "tipo": "controle_concentrado",
+    "classe": "ADC",
+    "tribunal": "STF",
+    "numero": "80",
+    "titulo": "ADC 80 do STF — critérios para a concessão da justiça gratuita",
+    "assunto": "justiça gratuita; gratuidade de justiça; hipossuficiência; art. 790, §§ 3º e 4º, da CLT",
+    "texto": "Ação Declaratória de Constitucionalidade 80, Supremo Tribunal Federal, Plenário, julgada em 03/09/2026 (8 votos a 2), redator do acórdão Min. Gilmar Mendes, vencidos o relator, Min. Edson Fachin, e a Min. Cármen Lúcia. O Tribunal declarou inconstitucional a expressão que fixava o critério de 40% do limite máximo dos benefícios do Regime Geral de Previdência Social no art. 790, § 3º, da CLT e reconheceu a inconstitucionalidade parcial por omissão do art. 790, §§ 3º e 4º, da CLT, fixando, até nova lei, critérios para todo o Poder Judiciário: (i) presume-se, de forma relativa, a insuficiência de recursos de quem recebe até R$ 5.000,00 mensais, valor da faixa de isenção do imposto de renda da Lei 15.270/2025, atualizado conforme a tabela do imposto de renda ou, na falta, pelo IPCA; a presunção alcança também os assistidos pela Defensoria Pública; (ii) acima desse valor, a parte deve demonstrar concretamente a insuficiência de recursos (art. 790, § 4º, da CLT); (iii) o juiz pode indeferir o benefício quando o patrimônio ou a renda familiar forem incompatíveis com ele; (iv) cabe ao requerente comprovar a renda (art. 99, § 2º, do CPC). O item I da Súmula 463 do TST foi declarado inconstitucional. Modulação: os critérios aplicam-se às ações ajuizadas a partir da publicação da ata do julgamento.",
+    "status": "vigente",
+    "vigencia_inicio": "2026-09-03",
+    "vinculante": true,
+    "fonte_oficial": "STF — Notícias STF (acórdão pendente de publicação)",
+    "url": "https://noticias.stf.jus.br/postsnoticias/stf-define-criterios-para-concessao-da-justica-gratuita-em-todo-o-judiciario/",
+    "marcadores": ["presunção de insuficiência até R$ 5.000,00", "justiça gratuita até 5 mil"]
+  },
+  {
+    "tipo": "tema",
+    "tribunal": "TST",
+    "numero": "21",
+    "tema": "21",
+    "titulo": "Tema 21 da Tabela de IRR do TST — gratuidade de justiça (superado pela ADC 80 do STF)",
+    "assunto": "justiça gratuita; gratuidade de justiça; hipossuficiência; art. 790, §§ 3º e 4º, da CLT",
+    "texto": "IncJulgRREmbRep-277-83.2020.5.09.0084, Tribunal Pleno, Relator Min. Breno Medeiros, Redator designado Min. Alberto Bastos Balazeiro. Tese: I - independentemente de pedido da parte, o magistrado trabalhista tem o poder-dever de conceder o benefício da justiça gratuita aos litigantes que perceberem salário igual ou inferior a 40% (quarenta por cento) do limite máximo dos benefícios do Regime Geral de Previdência Social, conforme evidenciado nos autos; II - o pedido de gratuidade de justiça, formulado por aquele que perceber salário superior a 40% (quarenta por cento) do limite máximo dos benefícios do Regime Geral de Previdência Social, pode ser instruído por documento particular firmado pelo interessado, nos termos da Lei nº 7.115/83, sob as penas do art. 299 do Código Penal; III - havendo impugnação à pretensão pela parte contrária, acompanhada de prova, o juiz abrirá vista ao requerente do pedido de gratuidade de justiça, decidindo, após, o incidente (art. 99, § 2º, do CPC). Critério afastado pela ADC 80 do STF, julgada em 03/09/2026, para as ações ajuizadas a partir da publicação da ata do julgamento.",
+    "status": "superado",
+    "superado_por": "acervo:adc:stf:80",
+    "vigencia_inicio": "2024-12-16",
+    "fonte_oficial": "TST — Tabela de Incidentes de Recursos Repetitivos",
+    "url": "https://www.tst.jus.br/documents/d/guest/irr021-3-pdf",
+    "marcadores": [
+      "igual ou inferior a 40% (quarenta por cento) do limite máximo",
+      "igual ou inferior a 40% do limite máximo",
+      "superior a 40% (quarenta por cento) do limite máximo",
+      "inferior a 40% do teto",
+      "40% do teto do RGPS",
+      "40% do teto dos benefícios"
+    ]
+  },
+  {
+    "tipo": "sumula",
+    "tribunal": "TST",
+    "numero": "463",
+    "titulo": "Súmula 463 do TST — item I declarado inconstitucional na ADC 80 do STF",
+    "assunto": "justiça gratuita; declaração de hipossuficiência",
+    "texto": "I - A partir de 26.06.2017, para a concessão da assistência judiciária gratuita à pessoa natural, basta a declaração de hipossuficiência econômica firmada pela parte ou por seu advogado, desde que munido de procuração com poderes específicos para esse fim (art. 105 do CPC de 2015); II - No caso de pessoa jurídica, não basta a mera declaração: é necessária a demonstração cabal de impossibilidade de a parte arcar com as despesas do processo. O item I foi declarado inconstitucional pelo STF na ADC 80, julgada em 03/09/2026 (ações ajuizadas a partir da publicação da ata do julgamento).",
+    "status": "superado",
+    "superado_por": "acervo:adc:stf:80",
+    "fonte_oficial": "TST — Súmulas",
+    "url": "https://www3.tst.jus.br/jurisprudencia/Sumulas_com_indice/Sumulas_Ind_451_500.html",
+    "marcadores": ["basta a declaração de hipossuficiência econômica firmada pela parte"]
+  }
+]

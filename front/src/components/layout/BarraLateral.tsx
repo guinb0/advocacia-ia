@@ -1,0 +1,451 @@
+"use client";
+
+/* A navegação entre módulos, agora em coluna e em toda tela.
+ *
+ * POR QUE SAIU DO TOPO
+ *
+ * Eram onze módulos numa faixa horizontal com `flex-wrap`, e o resultado dependia
+ * da largura da janela: em tela cheia cabia numa linha; num notebook quebrava em
+ * duas e empurrava a "Mesa do dia" para baixo da dobra; num celular virava um
+ * bloco de onze botões que ocupava a tela inteira antes de qualquer conteúdo.
+ * Menu que muda de altura conforme a janela também muda o lugar de tudo que vem
+ * depois — e o usuário perde a referência a cada redimensionamento.
+ *
+ * Em coluna, a lista cresce para baixo num espaço que é dela, e caber deixa de
+ * ser função da largura.
+ *
+ * POR QUE ELA É GLOBAL E O MENU ANTIGO NÃO ERA
+ *
+ * A faixa vivia DENTRO da `Carteira`, então só existia lá: de qualquer outra tela
+ * o caminho para um módulo era voltar para a carteira e sair de novo. A barra é
+ * montada uma vez, em volta de todas as telas (ver `home.view.tsx`), e por isso
+ * responde "onde eu estou" também nas telas que antes não tinham menu nenhum.
+ *
+ * NO CELULAR ELA SOME, E ISSO É O PONTO
+ *
+ * Abaixo de `lg` a coluna sairia de graça com metade da largura útil. Ali ela vira
+ * gaveta: fechada por padrão, aberta pelo botão do topo, e fechando sozinha ao
+ * navegar — quem tocou num módulo quer o módulo, não o menu ainda aberto por cima
+ * dele.
+ */
+
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, FileText, LogOut, Menu, Sparkles, X } from "lucide-react";
+
+import AlternadorTema from "@/components/ui/AlternadorTema";
+import { AUTH_ATIVA, useSessao } from "@/lib/auth";
+import { listarModulosDeSkill, type SkillModulo } from "@/lib/api";
+import { iconeDaTela, podeAbrirTela, rotuloNoMenu, type Tela } from "@/lib/telas";
+
+export interface ModuloNavegacao {
+  tela: Tela;
+  rotulo: string;
+  /** Telas internas que devem acender o mesmo item de navegação. */
+  relacionadas?: Tela[];
+  /** Quando a tela é a mesma para várias skills, este id distingue o módulo. */
+  skillId?: string;
+  /* Telas que só existem DENTRO deste item — ver o comentário do grupo
+   * "Escritório" sobre a Administração. Quando há subitens, o item vira
+   * expansível: a lista só ocupa espaço na coluna de quem a abriu. */
+  subitens?: ModuloNavegacao[];
+}
+
+export interface GrupoNavegacao {
+  titulo: string;
+  itens: ModuloNavegacao[];
+}
+
+/** Item de menu com rótulo do registro de telas; `extras` só para o que é do menu. */
+function itemDoMenu(tela: Tela, extras: Partial<Omit<ModuloNavegacao, "tela">> = {}): ModuloNavegacao {
+  return { tela, rotulo: rotuloNoMenu(tela), ...extras };
+}
+
+/* Os três grupos são os três trabalhos do escritório, e a ordem dentro deles é a
+ * do dia: conduzir a entrevista é o que se faz toda manhã; abrir caso antigo é a
+ * exceção. Era a mesma ordem da faixa horizontal — o que ela não tinha era o
+ * rótulo do grupo, que numa lista vertical é o que impede onze itens de virarem
+ * uma parede indistinta. */
+export const GRUPOS_NAVEGACAO: GrupoNavegacao[] = [
+  {
+    titulo: "Atendimento",
+    itens: [
+      // Primeiro da lista de propósito: é a tela de onde se pergunta qualquer coisa,
+      // inclusive "por onde eu começo".
+      itemDoMenu("chat"),
+      itemDoMenu("entrevista"),
+      // O dossiê, o painel, a jurimetria e o checklist são leituras de UM caso.
+      // Acendem a carteira para a barra não ficar sem resposta quando o advogado
+      // está dentro de um caso.
+      itemDoMenu("carteira", { relacionadas: ["caso", "dossie", "painel", "jurimetria"] }),
+      // O "Agente" (conversa geral) saiu do menu enquanto ainda não funciona — depende
+      // do serviço ia-juridica. A tela e a rota continuam existindo; só não aparece na
+      // navegação. Basta devolver `itemDoMenu("agente")` quando o serviço estiver de pé.
+      itemDoMenu("casos"),
+      itemDoMenu("pecasProtocoladas"),
+      itemDoMenu("followup"),
+      itemDoMenu("documentacao"),
+    ],
+  },
+  {
+    titulo: "Análise",
+    itens: [itemDoMenu("avulso"), itemDoMenu("revisao"), itemDoMenu("investigacao"), itemDoMenu("dados"), itemDoMenu("panorama")],
+  },
+  {
+    titulo: "Escritório",
+    itens: [
+      itemDoMenu("configuracaoAssinatura"),
+      itemDoMenu("operacao"),
+      itemDoMenu("supervisao"),
+      // No grupo "Escritório", e não em "Atendimento": manter o catálogo é
+      // trabalho de bastidor. Quem conduz entrevista já tem o botão de editar
+      // dentro do roteiro; esta entrada é para quem vem consertar depois.
+      itemDoMenu("catalogoRoteiros"),
+      itemDoMenu("glossarioDocumentos"),
+      itemDoMenu("tiposDeCaso"),
+      /* A Administração é o único item com filhos, e por um motivo prático: o que
+       * mora dentro dela é ajuste de escritório, feito uma vez e revisto raramente
+       * (quem entra, o que cada perfil acessa, por onde os documentos saem para
+       * assinatura). Como item plano, cada uma dessas telas gastava uma linha da
+       * coluna todo dia para um clique por mês; expansível, elas só aparecem para
+       * quem foi procurá-las. */
+      itemDoMenu("usuarios", {
+        subitens: [itemDoMenu("configuracaoAssinatura", { rotulo: "Assinatura" })],
+      }),
+      itemDoMenu("saudeAgente"),
+      itemDoMenu("gastosApi"),
+      itemDoMenu("acervoJuridico"),
+      itemDoMenu("modelosDePeticao"),
+    ],
+  },
+  {
+    titulo: "Skills",
+    itens: [itemDoMenu("skills")],
+  },
+];
+
+const ITEM =
+  "group relative flex w-full items-center gap-3 rounded-[10px] border border-transparent px-3 py-2.5 " +
+  "text-left text-sm font-semibold text-nav-texto-2 cursor-pointer transition-colors duration-[120ms] " +
+  "hover:bg-nav-fundo-hover hover:text-nav-texto";
+const ITEM_ATIVO =
+  "relative flex w-full items-center gap-3 rounded-[10px] border border-white/10 bg-nav-fundo-ativo px-3 py-2.5 " +
+  "text-left text-sm font-semibold text-nav-texto shadow-[inset_3px_0_0_var(--marca-ouro)] cursor-pointer";
+/* O subitem é o mesmo item, recuado e menor: recuo e traço à esquerda dizem
+ * "isto pertence ao de cima" sem repetir o nome do pai em cada linha. */
+const SUBITEM =
+  "group relative flex w-full items-center gap-2.5 rounded-[10px] border border-transparent py-2 pl-9 pr-3 " +
+  "text-left text-[13px] font-semibold text-nav-texto-3 cursor-pointer transition-colors duration-[120ms] " +
+  "hover:bg-nav-fundo-hover hover:text-nav-texto";
+const SUBITEM_ATIVO =
+  "relative flex w-full items-center gap-2.5 rounded-[10px] border border-white/10 bg-nav-fundo-ativo py-2 pl-9 pr-3 " +
+  "text-left text-[13px] font-semibold text-nav-texto cursor-pointer";
+const GRUPO_TITULO =
+  "px-3 mt-5 mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-nav-texto-3 first:mt-0";
+
+function ativa(modulo: ModuloNavegacao, tela: Tela, skillAberta: string | null): boolean {
+  if (modulo.skillId) return tela === "skills" && skillAberta === modulo.skillId;
+  if (modulo.tela === "skills") return tela === "skills" && !skillAberta;
+  return modulo.tela === tela || (modulo.relacionadas?.includes(tela) ?? false);
+}
+
+/** O item está aceso porque um FILHO dele é a tela atual? Se sim, já abre expandido. */
+export function filhoAtivo(item: ModuloNavegacao, tela: Tela, skillAberta: string | null = null): boolean {
+  return (item.subitens ?? []).some((sub) => ativa(sub, tela, skillAberta));
+}
+
+function indiceDoModulo(item: ModuloNavegacao, modulos: string[]): number {
+  const indice = modulos.findIndex((modulo) => podeAbrirTela(item.tela, [modulo]));
+  const proprio = indice === -1 ? Number.MAX_SAFE_INTEGER : indice;
+  /* Um pai que a pessoa não pode abrir mas cujo filho ela pode (tem `contratos`
+   * e não tem `usuarios`) ordena pelo filho — senão ele iria para o fim da lista
+   * por um módulo que nem é o motivo de ele estar ali. */
+  return Math.min(proprio, ...(item.subitens ?? []).map((sub) => indiceDoModulo(sub, modulos)));
+}
+
+export function gruposPermitidos(modulos: string[]): GrupoNavegacao[] {
+  return [...GRUPOS_NAVEGACAO]
+    .map((grupo, indiceGrupo) => {
+      const itens = grupo.itens
+        .map((item) => {
+          const subitens = (item.subitens ?? []).filter((sub) => podeAbrirTela(sub.tela, modulos));
+          return subitens.length > 0 ? { ...item, subitens } : { ...item, subitens: undefined };
+        })
+        /* O pai FICA quando só o filho é permitido: ali ele é apenas o rótulo que
+         * abre a lista, sem navegar para lugar nenhum (ver `navegarNoPai`). Some
+         * de vez só quando nem ele nem nenhum filho sobrou. */
+        .filter((item) => podeAbrirTela(item.tela, modulos) || (item.subitens?.length ?? 0) > 0)
+        .sort((a, b) => indiceDoModulo(a, modulos) - indiceDoModulo(b, modulos));
+      return { ...grupo, itens, indiceGrupo };
+    })
+    .filter((grupo) => grupo.itens.length > 0)
+    .sort((a, b) => {
+      const ordemA = Math.min(...a.itens.map((item) => indiceDoModulo(item, modulos)));
+      const ordemB = Math.min(...b.itens.map((item) => indiceDoModulo(item, modulos)));
+      return ordemA - ordemB || a.indiceGrupo - b.indiceGrupo;
+    })
+    .map(({ indiceGrupo: _indiceGrupo, ...grupo }) => grupo);
+}
+
+interface Props {
+  tela: Tela;
+  skillAberta?: string | null;
+  onNavegar: (tela: Tela) => void;
+  onAbrirSkill?: (skillId: string) => void;
+}
+
+export default function BarraLateral({ tela, skillAberta = null, onNavegar, onAbrirSkill }: Props) {
+  const [aberta, setAberta] = useState(false);
+  /* Quais itens com filhos estão expandidos. Vive aqui, e não no item, porque é
+   * estado de quem está olhando a coluna — não da definição do menu. */
+  const [expandidos, setExpandidos] = useState<Tela[]>([]);
+  const [skills, setSkills] = useState<SkillModulo[]>([]);
+  const sessao = useSessao();
+  const modulos = sessao.carregando ? [] : sessao.modulos;
+  const nome = sessao.nome || sessao.usuario || "Usuário";
+  const perfil = sessao.papeis[0] || "Perfil ativo";
+
+  // Esc fecha a gaveta. Sem isto, no celular, o único jeito de desistir do menu é
+  // acertar o backdrop — e ele é justamente o que fica atrás do dedo.
+  useEffect(() => {
+    if (!aberta) return;
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAberta(false);
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [aberta]);
+
+  // Gaveta aberta trava a rolagem do corpo: sem isso, arrastar sobre o backdrop
+  // rola a página atrás e o usuário perde o lugar onde estava.
+  useEffect(() => {
+    if (!aberta) return;
+    const anterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = anterior;
+    };
+  }, [aberta]);
+
+  const grupos = useMemo(() => {
+    const base = gruposPermitidos(modulos);
+    if (skills.length === 0) return base;
+    return base.map((grupo) => ({
+      ...grupo,
+      itens: grupo.itens.map((item) =>
+        item.tela === "skills"
+          ? {
+              ...item,
+              subitens: skills.map((skill) => ({
+                tela: "skills" as const,
+                rotulo: skill.nome,
+                skillId: skill.id,
+              })),
+            }
+          : item,
+      ),
+    }));
+  }, [modulos, skills]);
+
+  useEffect(() => {
+    if (!modulos.includes("skills")) return;
+    const ler = () => {
+      void listarModulosDeSkill().then(setSkills).catch(() => setSkills([]));
+    };
+    ler();
+    window.addEventListener("skills-atualizadas", ler);
+    return () => window.removeEventListener("skills-atualizadas", ler);
+  }, [modulos.includes("skills")]);
+
+  /* Estar numa tela-filha e ver o pai fechado seria a barra dizendo que o item
+   * aberto não está em lugar nenhum. Abre o pai da tela atual — e deixa aberto,
+   * sem fechar o que a pessoa expandiu à mão. */
+  useEffect(() => {
+    const pais = grupos
+      .flatMap((grupo) => grupo.itens)
+      .filter((item) => filhoAtivo(item, tela, skillAberta))
+      .map((item) => item.tela);
+    if (pais.length === 0) return;
+    setExpandidos((atuais) => {
+      const faltando = pais.filter((pai) => !atuais.includes(pai));
+      return faltando.length === 0 ? atuais : [...atuais, ...faltando];
+    });
+  }, [grupos, tela, skillAberta]);
+
+  function navegar(destino: Tela) {
+    onNavegar(destino);
+    setAberta(false);
+  }
+
+  function alternar(pai: Tela) {
+    setExpandidos((atuais) =>
+      atuais.includes(pai) ? atuais.filter((t) => t !== pai) : [...atuais, pai],
+    );
+  }
+
+  const lista = (
+    <nav className="flex flex-col gap-[2px] px-3 pb-5 pt-2" aria-label="Módulos do sistema">
+      {grupos.map((grupo) => {
+        const itens = grupo.itens;
+        if (itens.length === 0) return null;
+        return (
+          <div key={grupo.titulo}>
+            <div className={GRUPO_TITULO}>{grupo.titulo}</div>
+            {itens.map((item) => {
+              const subitens = item.subitens ?? [];
+              const temFilhos = subitens.length > 0;
+              const expandido = temFilhos && expandidos.includes(item.tela);
+              /* Pai com filho aberto também fica aceso: o recuo diz onde a pessoa
+               * está, mas só dentro de uma lista que ela consegue ver. */
+              const acesa = ativa(item, tela, skillAberta) || (temFilhos && !expandido && filhoAtivo(item, tela, skillAberta));
+              const podeAbrirPai = podeAbrirTela(item.tela, modulos);
+              const Icone = iconeDaTela(item.tela) ?? FileText;
+              const Seta = expandido ? ChevronDown : ChevronRight;
+              return (
+                <div key={item.tela}>
+                  <button
+                    type="button"
+                    className={acesa ? ITEM_ATIVO : ITEM}
+                    aria-current={acesa ? "page" : undefined}
+                    aria-expanded={temFilhos ? expandido : undefined}
+                    onClick={() => {
+                      /* Um clique faz as duas coisas: abre a lista e vai para a tela
+                       * do pai. Separar em dois alvos (seta e rótulo) numa coluna
+                       * estreita — e no toque do celular — só produz clique errado. */
+                      if (temFilhos) alternar(item.tela);
+                      if (podeAbrirPai) navegar(item.tela);
+                    }}
+                  >
+                    <Icone
+                      size={17}
+                      className={acesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1 truncate">{item.rotulo}</span>
+                    {temFilhos && (
+                      <Seta
+                        size={15}
+                        className={acesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
+                        aria-hidden
+                      />
+                    )}
+                  </button>
+                  {expandido &&
+                    subitens.map((sub) => {
+                      const subAcesa = ativa(sub, tela, skillAberta);
+                      const IconeSub = sub.skillId ? Sparkles : (iconeDaTela(sub.tela) ?? FileText);
+                      return (
+                        <button
+                          key={sub.skillId ?? sub.tela}
+                          type="button"
+                          className={subAcesa ? SUBITEM_ATIVO : SUBITEM}
+                          aria-current={subAcesa ? "page" : undefined}
+                          onClick={() => {
+                            if (sub.skillId && onAbrirSkill) onAbrirSkill(sub.skillId);
+                            else navegar(sub.tela);
+                            setAberta(false);
+                          }}
+                        >
+                          <IconeSub
+                            size={15}
+                            className={subAcesa ? "shrink-0 text-marca-ouro" : "shrink-0 text-nav-icone group-hover:text-nav-texto"}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 truncate">{sub.rotulo}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </nav>
+  );
+
+  return (
+    <>
+      {/* ------------------------------------------------- topo só do celular */}
+      <div className="sticky top-0 z-30 flex h-[65px] shrink-0 items-center gap-3 border-b border-nav-borda bg-nav-fundo px-4 py-3 text-nav-texto shadow-[0_12px_30px_rgba(0,42,71,0.18)] lg:hidden">
+        <button
+          type="button"
+          className="inline-flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-nav-texto transition-colors hover:bg-white/[0.14]"
+          aria-expanded={aberta}
+          aria-controls="barra-lateral"
+          aria-label={aberta ? "Fechar menu" : "Abrir menu"}
+          onClick={() => setAberta((v) => !v)}
+        >
+          {aberta ? <X size={20} aria-hidden /> : <Menu size={20} aria-hidden />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <span className="block truncate font-titulo text-lg font-bold leading-none">Acervo</span>
+          <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
+            Escritório jurídico
+          </span>
+        </div>
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          <span className="hidden min-w-0 text-right min-[430px]:block">
+            <strong className="block max-w-[130px] truncate text-xs text-nav-texto">{nome}</strong>
+            <span className="block max-w-[130px] truncate text-[11px] text-nav-texto-3">{perfil}</span>
+          </span>
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.10] text-xs font-bold uppercase text-nav-texto ring-1 ring-white/[0.16]">
+            {nome.slice(0, 2)}
+          </span>
+          <AlternadorTema variante="celular" />
+          {AUTH_ATIVA && (
+            <button
+              type="button"
+              onClick={sessao.sair}
+              className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-[10px] border border-white/[0.16] bg-white/[0.08] text-nav-texto transition-colors hover:bg-white/[0.14]"
+              aria-label="Sair"
+              title="Sair"
+            >
+              <LogOut size={17} aria-hidden />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* O fundo escuro só existe com a gaveta aberta, e só no celular. */}
+      {aberta && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-tinta/40"
+          aria-hidden
+          onClick={() => setAberta(false)}
+        />
+      )}
+
+      {/* --------------------------------------------------------- a coluna */}
+      <aside
+        id="barra-lateral"
+        className={
+          "border-nav-borda bg-nav-fundo " +
+          // Celular: gaveta fixa que desliza. `translate-x` em vez de `display`
+          // para a transição existir e para o conteúdo continuar no DOM — um menu
+          // que some do DOM perde o foco do teclado no meio da navegação.
+          "fixed inset-y-0 left-0 z-50 w-[264px] max-w-[82vw] overflow-y-auto overscroll-contain border-r " +
+          "transition-transform duration-200 ease-out " +
+          (aberta ? "translate-x-0" : "-translate-x-full") +
+          // Desktop: coluna do fluxo, sempre visível, acompanhando a rolagem.
+          " lg:translate-x-0 lg:static lg:z-auto lg:h-dvh lg:w-full lg:max-w-none " +
+          "lg:shrink-0"
+        }
+      >
+        <div className="hidden px-5 pb-4 pt-5 lg:block">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-[12px] bg-white/[0.10] text-marca-ouro ring-1 ring-white/[0.12]">
+              <FileText size={20} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <span className="block truncate font-titulo text-xl font-bold leading-none text-nav-texto">Acervo</span>
+              <span className="mt-1 block truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-nav-texto-3">
+                Escritório jurídico
+              </span>
+            </div>
+          </div>
+        </div>
+        {lista}
+      </aside>
+    </>
+  );
+}

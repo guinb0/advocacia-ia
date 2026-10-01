@@ -258,7 +258,7 @@ export NEXT_PUBLIC_JITSI_URL="$URL_JITSI"
 if [[ "$SEM_JITSI" -eq 0 ]]; then
   if ! http_ok "$URL_JITSI/libs/lib-jitsi-meet.min.js" 3; then
     echo "Preparando o servidor de chamadas Jitsi..."
-    scripts/preparar_jitsi.sh \
+    back/scripts/preparar_jitsi.sh \
       --versao "${JITSI_IMAGE_VERSION:-stable}" \
       --url-publica "$URL_JITSI" \
       --ips-anunciados "${JITSI_ADVERTISE_IPS:-127.0.0.1}"
@@ -277,28 +277,47 @@ else
   echo "Jitsi não iniciado (--sem-jitsi)."
 fi
 
-mkdir -p dados
-if [[ ! -f dados/.portal-segredo ]]; then
-  openssl rand -base64 32 > dados/.portal-segredo
-  chmod 600 dados/.portal-segredo
-  echo "Segredo do portal gerado em dados/.portal-segredo"
+# O backend mora em back/ e procura dados/ ao lado dele. Um clone de antes da
+# divisão em front/back/ia guarda os casos em ./dados, e o Git não move o que não
+# é versionado: sem isto o sistema subiria vazio. Nada que já exista em
+# back/dados é sobrescrito; o que sobrar fica em ./dados para conferência.
+if [[ -d dados ]]; then
+  echo "Movendo ./dados para ./back/dados (nova organização do repositório)..."
+  (cd dados && find . -type f -print0) | while IFS= read -r -d '' arquivo; do
+    destino="back/dados/${arquivo#./}"
+    [[ -e "$destino" ]] && continue
+    mkdir -p "$(dirname "$destino")"
+    mv "dados/${arquivo#./}" "$destino"
+  done
+  find dados -depth -type d -empty -delete 2>/dev/null || true
+  [[ -d dados ]] && echo "Ficou algo em ./dados que já existia em ./back/dados; confira antes de apagar."
 fi
-export PORTAL_SEGREDO="$(tr -d '\r\n' < dados/.portal-segredo)"
+
+mkdir -p back/dados
+if [[ ! -f back/dados/.portal-segredo ]]; then
+  openssl rand -base64 32 > back/dados/.portal-segredo
+  chmod 600 back/dados/.portal-segredo
+  echo "Segredo do portal gerado em back/dados/.portal-segredo"
+fi
+export PORTAL_SEGREDO="$(tr -d '\r\n' < back/dados/.portal-segredo)"
 
 if [[ ! -x ".venv/bin/python" ]]; then
   echo "Criando ambiente Python..."
   uv venv --python 3.11
 fi
-uv pip install --python .venv/bin/python -r requirements.txt >/dev/null
+uv pip install --python .venv/bin/python -r back/requirements.txt >/dev/null
+# Põe back/ no sys.path do .venv: `.venv/bin/python -m tests.x` (ou scripts.x,
+# app.x) continua funcionando da raiz, como antes da divisão.
+printf '%s' "$ROOT/back" > "$(.venv/bin/python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")/advocacia-back.pth"
 
-if [[ ! -d "frontend/node_modules" ]]; then
+if [[ ! -d "front/node_modules" ]]; then
   echo "Instalando dependências do frontend..."
-  (cd frontend && npm install)
+  (cd front && npm install)
 fi
 
 if [[ "$PROD" -eq 1 ]]; then
   echo "Compilando frontend de produção..."
-  (cd frontend && npm run build)
+  (cd front && npm run build)
 fi
 
 if [[ "$SEM_AGENTE" -eq 0 ]]; then
@@ -392,6 +411,10 @@ echo
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+# O pacote `app` fica em back/. Os processos rodam da raiz (onde estão .venv e
+# .env); é o PYTHONPATH que os faz achar `app.main` e `app.celery_app`.
+export PYTHONPATH="$ROOT/back"
+
 .venv/bin/python -m uvicorn app.main:app --host "$HOST_ESCUTA" --port "$PORTA_BACKEND" --timeout-keep-alive 65 &
 BACKEND_PID=$!
 
@@ -432,7 +455,7 @@ if ! wait_modelo_aquecido "http://127.0.0.1:$PORTA_TRANSCRICAO/saude" "$TRANSCRI
 fi
 echo "Transcrição pronta."
 
-cd frontend
+cd front
 export PORT="$PORTA"
 if [[ "$PROD" -eq 1 ]]; then
   npm run start -- -H "$HOST_ESCUTA"
