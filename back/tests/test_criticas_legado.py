@@ -84,6 +84,38 @@ def test_memoria_de_calculo_vira_tabela_word_compacta_e_nao_conta_como_pedido():
     assert "MEMORIA_DE_CALCULO_AUSENTE" not in codigos
 
 
+def test_valor_da_causa_do_legado_e_a_soma_do_ledger_e_nao_soma_a_memoria_de_calculo():
+    from app import documento_final
+
+    pedidos = [
+        _pedido("P01", "Danos morais", "indenização por assédio moral", valor=20000.0,
+                metodo={"base": 2000, "multiplicador": 10, "resultado": 20000, "criterio": "salário do contracheque"}),
+        _pedido("P02", "Horas extras", "horas extras com adicional de 50%", valor=1312.5,
+                metodo={"base": 13.125, "multiplicador": 100, "resultado": 1312.5, "criterio": "valor-hora × 100 horas"}),
+        _pedido("P03", "Danos morais", "indenização reduzida", valor=10000.0, natureza="subsidiario"),
+    ]
+    plano = _plano(pedidos)
+    texto, _ = pp.renderizar_pedidos(plano, _sem_redacao)
+    secoes = [{"code": "FACTS", "label": "Dos fatos", "content": "A reclamante foi admitida em 03/03/2020."},
+              {"code": "CLAIMS", "label": "Dos pedidos", "content": texto},
+              {"code": "CLOSING", "label": "", "content": "Dá-se à causa o valor de R$ 1,00.\n\nNestes termos, pede deferimento."}]
+    assert "_juridico_estrito" not in plano and "valor_da_causa_calculado" not in plano
+    finais, _ = documento_final.higienizar(secoes, plano, {})
+    fecho = next(s["content"] for s in finais if s["code"] == "CLOSING")
+    assert "R$ 21.312,50" in fecho, fecho
+    assert not any(v.codigo == "VALOR_DA_CAUSA_NAO_FECHA" for v in ae.valor_da_causa(finais, plano))
+
+
+def test_valor_da_causa_do_legado_sem_valor_no_ledger_nao_e_reescrito():
+    from app import documento_final
+
+    plano = _plano([_pedido("P01", "Danos morais", "indenização por assédio")])
+    secoes = [{"code": "CLAIMS", "label": "Dos pedidos", "content": "a) indenização de R$ 5.000,00;\nb) multa de R$ 700,00."},
+              {"code": "CLOSING", "label": "", "content": "Dá-se à causa o valor de R$ 1,00."}]
+    finais, _ = documento_final.higienizar(secoes, plano, {})
+    assert "R$ 1,00" in next(s["content"] for s in finais if s["code"] == "CLOSING")
+
+
 # ------------------------------------------------------------------ pedido de pagamento sem valor
 
 def _plano_sem_valor():
