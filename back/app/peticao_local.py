@@ -897,6 +897,28 @@ def carregar(caso_id: str) -> dict[str, Any] | None:
 
 @skill_peticao.com_skill_do_caso
 def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
+    # Nenhum caminho de edição/exportação pode conservar READY de uma versão
+    # anterior: revalida o texto que efetivamente será persistido. A geração
+    # completa já fez auditorias mais profundas; isto é a rede determinística
+    # comum a geração, edição humana e revisões automáticas.
+    secoes = [s for s in dados.get("sections") or [] if s.get("code") != "JURIMETRY"]
+    if secoes:
+        try:
+            _, violacoes, _ = _conferir_contra_os_autos(caso_id, secoes, corrigir=False)
+            _aplicar_conferencia(dados, secoes, violacoes)
+            if any(v.bloqueia for v in violacoes):
+                prontidao = dados.setdefault("readiness", {})
+                prontidao["ready"] = False
+                prontidao["status"] = "BLOCKED"
+                prontidao.setdefault("blocking_issues", []).extend(
+                    f"[{v.codigo}] {v.motivo}"[:200] for v in violacoes if v.bloqueia
+                )
+        except Exception:  # noqa: BLE001 - falha de conferência também não autoriza READY
+            dados.setdefault("readiness", {})["ready"] = False
+            dados["readiness"]["status"] = "BLOCKED"
+            dados["readiness"].setdefault("blocking_issues", []).append(
+                "Conferência final não executou; protocolo bloqueado."
+            )
     dados["updated_at"] = _agora()
     dados["docx_style_version"] = DOCX_STYLE_VERSION
     armazenamento.salvar_peticao_local(
@@ -1017,6 +1039,21 @@ def _llm_json(
     instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
     repetir_apos_timeout: bool = True, max_tokens: int | None = None,
 ) -> dict[str, Any]:
+    # Homologação e contingência: permite usar OpenAI como provedor primário,
+    # sem iniciar nem aguardar uma chamada DeepSeek degradada.
+    if os.getenv("PETICAO_FORNECEDOR", "").strip().lower() == "openai":
+        reserva = _reserva_configurada()
+        if reserva is None:
+            raise ErroPeticao("OPENAI_API_KEY ausente — não é possível usar OpenAI como provedor primário.")
+        base_openai, chave_openai = reserva
+        modelo_openai = modelo or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
+        escolha = _chamar_provedor("openai", base_openai, chave_openai, modelo_openai,
+                                   instrucao, entrada, max_tokens, timeout)
+        conteudo = escolha["message"]["content"]
+        try:
+            return json.loads(conteudo)
+        except json.JSONDecodeError as erro:
+            raise ErroPeticao("OpenAI retornou JSON inválido.") from erro
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
         raise ErroPeticao("DEEPSEEK_API_KEY ausente — configure no .env.")
@@ -2857,17 +2894,40 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     elif sombra or assistido:
         analise_em_sombra = _em_sombra(lambda: _analise_juridica(caso_id, plano_est, contexto, texto_entrevista, data_da_peticao))
     plano_para_consultas = plano
+    instrucao_base += (
+        "\n\n=== FONTE CANONICA OBRIGATORIA ===\n"
+        "O PETITION_PLAN fornecido na entrada e a unica fonte para datas, valores, "
+        "percentuais e fatos no corpo. Nao complete cronologia por inferencia. "
+        "Em FACTS, so escreva uma data se ela estiver identificada no plano com fonte; "
+        "caso contrario, omita o marco e registre a lacuna apenas em pendencias. "
+        "Nao escreva valores monetarios em CLAIMS ou VALUE: o renderer os substitui "
+        "pelos objetos de calculo e pelo valor da causa canonicos."
+    )
+    instrucao_base += (
+        "\n\n=== PADRAO DE RACIOCINIO FORENSE ===\n"
+        "Para cada tese aproveitada, conecte fato documental especifico -> regra ou precedente verificado -> "
+        "consequencia juridica -> pedido correspondente. Antecipe a defesa previsivel apenas quando os autos "
+        "derem base e responda com prova ou regra aplicavel; nao crie uma controversia artificial. Diferencie "
+        "o que esta provado, o que e alegacao e o que depende de pericia. Prefira uma fundamentacao precisa "
+        "e aderente aos fatos a uma lista de artigos ou julgados. Toda citacao deve explicar, em linguagem "
+        "propria, por que a sua razao de decidir alcanca este caso."
+    )
     if estrito and prep_juridico:
         plano_para_consultas = {**(plano or {}), "teses": [*juridico_orq.consultas_das_teses(prep_juridico), *((plano or {}).get("teses") or [])]}
     consultas = recuperacao_por_tese.consultas_do_plano(
         plano_para_consultas, contexto, nome_categoria, consulta_fixa_legada=not estrito)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
+    # Pesquisa externa é lenta. Dispara antes das recuperações locais e da
+    # redação para que ela use todo esse tempo em paralelo. Achados novos nunca
+    # entram como citação automática: continuam sujeitos ao Citation Gate.
+    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(
+        plano_est, plano_para_consultas, data_da_peticao
+    )
     avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 30)
     uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
     precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
-    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(plano_est, plano, data_da_peticao)
     _TEXTO_DO_CASO.set(contexto[:20_000])
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria, consultas=consultas
@@ -3064,7 +3124,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
     avancar_etapa("Redigindo a petição — esta é a etapa mais demorada…", 35)
-    entrada_redacao = contexto
+    entrada_redacao = plano_da_peticao.para_prompt(plano_est) + "\n\n" + contexto
     if estrito and prep_juridico:
         # Plano, base jurídica e regras PRIMEIRO; o corte de tamanho cai no fim do material do caso, nunca no plano.
         extras = contexto[tamanho_caso + len(precedentes) + len(legislacao) + len(padroes) + len(outline):]
@@ -3308,8 +3368,17 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
-            "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("documento_final", {}).get("pendencias_humanas")),
+            # Uma minuta com qualquer violação factual, cálculo sem origem ou
+            # total divergente jamais é elegível a protocolo, inclusive no fluxo
+            # legado. Antes, essas falhas ficavam só em `review.findings` e a
+            # prontidão podia permanecer verdadeira.
+            "ready": not (
+                any(v.bloqueia for v in violacoes)
+                or auditoria_estrutural.pendencias(secoes)
+                or pipeline.get("documento_final", {}).get("pendencias_humanas")
+            ),
             "blocking_issues": [
+                *(f"[{v.codigo}] {v.motivo}"[:200] for v in violacoes if v.bloqueia),
                 *(f"[PENDENTE] no texto ({c}): {m}"[:200] for c, m in auditoria_estrutural.pendencias(secoes)),
                 *((pipeline.get("documento_final") or {}).get("pendencias_humanas") or []),
             ],
@@ -3396,7 +3465,10 @@ def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, te
     fontes.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
     modelo = juridico.modelo_raciocinio() or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     return juridico_orq.analisar(
-        plano_est=plano_est, contexto_caso=contexto, fontes=fontes, llm=_llm_raciocinio(300.0),
+        # A matriz de fontes vai separada e completa; limitar o resumo evita que
+        # uma única chamada de issue-spotting com >120 mil caracteres expire antes
+        # de qualquer auditoria rodar.
+        plano_est=plano_est, contexto_caso=contexto[:80_000], fontes=fontes, llm=_llm_raciocinio(300.0),
         textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=modelo, data_referencia=data_da_peticao,
         llm_contrateses=_llm_raciocinio(180.0) if _ligado("PETICAO_MOTOR_CONTRATESES_LLM") else None, modelo_contrateses=modelo,
     )

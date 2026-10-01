@@ -126,10 +126,10 @@ def test_peticao_local_integra_a_etapa_sem_bloquear_a_peca(monkeypatch, tmp_path
     from app import peticao_local
     plano_est = {"teses": [{"titulo": "Benefício da justiça gratuita"}]}
 
+    # A checagem de atualidade não pode ser desligada por ambiente: quando a
+    # web estiver indisponível, a geração registra a pendência em vez de fingir
+    # que a jurisprudência foi pesquisada.
     monkeypatch.setenv("PETICAO_ATUALIZACAO_JURIDICA", "0")
-    assert peticao_local._iniciar_atualizacao_juridica(plano_est, None, HOJE) == (None, "")
-
-    monkeypatch.setenv("PETICAO_ATUALIZACAO_JURIDICA", "1")
     monkeypatch.setenv("ACERVO_ARMAZENAMENTO_JSON", str(tmp_path / "acervo.json"))
     monkeypatch.setattr(peticao_local.juridico_repo, "carregar_autoridades", lambda: ([_adc80(verificada=True), _tema21()], ""))
     original = atu.pesquisar

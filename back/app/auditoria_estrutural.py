@@ -324,6 +324,18 @@ def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[
         )
     )
     saida: list[Violacao] = []
+    soma = soma_cumulativos(plano)
+    # A regra anterior só comparava o valor QUANDO o texto já continha a linha.
+    # Assim, uma inicial com pedidos líquidos e sem valor da causa escapava do
+    # gate inteiro — defeito formal que impede o protocolo trabalhista.
+    if soma and not ocorrencias:
+        saida.append(_v(
+            "VALOR_DA_CAUSA_AUSENTE",
+            "VALUE",
+            "",
+            "Há pedidos cumulativos com valor no ledger, mas o documento não declara o valor da causa.",
+            "Renderize uma única linha de valor da causa a partir da soma canônica dos pedidos cumulativos.",
+        ))
     if len(ocorrencias) > 1:
         saida.append(_v(
             "VALOR_DA_CAUSA_DUPLICADO",
@@ -332,7 +344,6 @@ def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[
             f"«Dá-se à causa» / valor da causa aparece {len(ocorrencias)} vezes na peça.",
             "Mantenha UMA linha de valor da causa, no fechamento; remova as demais.",
         ))
-    soma = soma_cumulativos(plano)
     if ocorrencias and soma and abs(_reais(ocorrencias[0].group(1)) - soma) > 0.01:
         saida.append(_v(
             "VALOR_DA_CAUSA_NAO_FECHA",
