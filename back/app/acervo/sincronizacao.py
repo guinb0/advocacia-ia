@@ -199,7 +199,7 @@ def sincronizar_documento(
                texto_inalterado=bool(anterior.get("content_hash")) and anterior.get("content_hash") == digest)
 
     # 2. diff por dispositivo
-    m = Mudancas(fonte={"titulo": item["nome"], "url": item["url"]})
+    m = Mudancas(fonte={"titulo": item["nome"], "url": item["url"]}, ordem_dos_artigos={n.dispositivo_id: n.ordem for n in artigos})
     por_disp = {v["dispositivo_id"]: v for v in abertas if v.get("dispositivo_id")}
     legado = [v for v in abertas if not v.get("dispositivo_id")]
     primeira_carga = not por_disp
@@ -298,7 +298,11 @@ def sincronizar_documento(
     if simular:
         rel["status"] = "SIMULADO"
         return rel
-    armazenamento.aplicar(doc_id, m, agora=agora)
+    try:
+        armazenamento.aplicar(doc_id, m, agora=agora)
+    except Exception as erro:  # noqa: BLE001 - a transação volta inteira; o registro não pode ficar EM_ANDAMENTO
+        log.exception("acervo: falha ao gravar %s", doc_id)
+        return falhar("FALHA_NA_GRAVACAO", f"GRAVACAO: {type(erro).__name__}: {str(erro)[:400]}")
     for a in alertas:
         armazenamento.alertar({"document_id": doc_id, "sincronizacao_id": sinc_id, **a}, agora=agora)
     houve_mudanca = bool(m.inserir or m.encerrar or m.associar)

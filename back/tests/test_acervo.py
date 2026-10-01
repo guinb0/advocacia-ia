@@ -73,6 +73,35 @@ def test_mojibake_na_fonte_vira_erro_e_nao_grava_texto_corrompido():
     assert any(a["tipo"] == "ENCODING_CORROMPIDO" for a in m.alertas())
 
 
+def test_falha_ao_gravar_fecha_a_sincronizacao_como_erro_e_mantem_o_texto_anterior(monkeypatch):
+    m = arm.Memoria()
+    _sinc(m, V1)
+    antes = [dict(v) for v in m.versoes_]
+
+    def quebra(*a, **k):
+        raise RuntimeError('duplicate key value violates unique constraint "uq_chunks_fonte_ordem"')
+
+    monkeypatch.setattr(m, "aplicar", quebra)
+    r = _sinc(m, V2, dias=1)
+    assert r["status"] == st.ERRO and "uq_chunks_fonte_ordem" in r["erro"]
+    assert m.sincronizacoes(document_id="teste", limite=1)[0]["status"] == st.ERRO, "não fica EM_ANDAMENTO para sempre"
+    assert m.documento("teste")["sync_status"] == st.ERRO and m.versoes_ == antes
+    assert any(a["tipo"] == "FALHA_NA_GRAVACAO" for a in m.alertas())
+
+
+def test_gravacao_recebe_a_ordem_atual_dos_artigos_e_agrupa_o_lote(monkeypatch):
+    m = arm.Memoria()
+    vistos = []
+    original = m.aplicar
+    monkeypatch.setattr(m, "aplicar", lambda doc, mud, **k: vistos.append(mud) or original(doc, mud, **k))
+    _sinc(m, V1)
+    ordem = vistos[0].ordem_dos_artigos
+    assert set(ordem) == {"art-1", "art-2", "art-3", "art-4"} and len(set(ordem.values())) == 4
+    assert all(g["ordem"] == ordem[g["dispositivo_id"]] for g in vistos[0].chunks_gravar)
+    grupos = arm._agrupar_por_colunas([(1, {"a": 1, "b": 2}), (2, {"a": 3, "b": 4}), (3, {"a": 5}), (4, {})])
+    assert grupos == [(("a", "b"), [(1, (1, 2)), (2, (3, 4))]), (("a",), [(3, (5,))])]
+
+
 # ------------------------------------------------------------------ versionamento
 
 def test_primeira_carga_e_sincronizacao_sem_mudanca():
