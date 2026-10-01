@@ -6,6 +6,12 @@ CALCULATION  todo valor dos pedidos vem de cálculo; valor da causa único e igu
 CONSISTENCY  nenhuma tese do issue spotting some sem registro; perícia requerida; contradições expostas.
 
 Nenhum auditor altera o texto: apontam, e o veredito decide se a peça pode ser entregue como pronta.
+
+Níveis (`nivel` de cada achado): INFO, WARNING, BLOCKING, CRITICAL. `severidade` continua "bloqueia"/"alerta"
+(compatível); o nível acrescenta a gravidade: CRITICAL é o erro que, entregue, causa dano direto (autoridade ou
+dispositivo inexistente, data impossível, cálculo divergente, valor da causa inconsistente, fato contradito usado
+como certo, citação que não sustenta ou contradiz a afirmação, documento ou fato posterior à petição).
+Strict: CRITICAL bloqueia sem fallback. Legado: CRITICAL vira pendência destacada para o advogado.
 """
 
 from __future__ import annotations
@@ -20,14 +26,42 @@ from . import teses as ts
 from .autoridades import norm
 from .fatos import INFERIDO, _DATA, _REAIS, valor_canonico
 
-BLOQUEIA, ALERTA = "bloqueia", "alerta"
+BLOQUEIA, ALERTA, INFORMA = "bloqueia", "alerta", "info"
+INFO, WARNING, BLOCKING, CRITICAL = "INFO", "WARNING", "BLOCKING", "CRITICAL"
+NIVEIS = (INFO, WARNING, BLOCKING, CRITICAL)
+#: Códigos que, se a peça sair com eles, causam dano direto. Sempre bloqueiam, qualquer que seja a severidade de origem.
+CODIGOS_CRITICOS = frozenset({
+    "DISPOSITIVO_INEXISTENTE", "AUTORIDADE_INEXISTENTE",
+    "CRONOLOGIA_IMPOSSIVEL", "DATA_POSTERIOR_A_PETICAO", "FATO_FUTURO", "AUTORIDADE_POSTERIOR_A_PETICAO",
+    "PEDIDO_DIVERGENTE_DO_CALCULO", "PEDIDO_COM_CALCULO_INEXISTENTE", "DUPLA_CONTAGEM", "BASE_SALARIAL_DIVERGENTE",
+    "VALOR_DA_CAUSA_DIVERGENTE", "VALOR_DA_CAUSA_DIFERENTE_DA_SOMA", "VALOR_DA_CAUSA_NAO_FECHA",
+    "FATO_CONTRADITORIO_USADO",
+    "CITACAO_CONTRADIZ_A_AFIRMACAO", "CITACAO_NAO_SUSTENTA_A_AFIRMACAO",
+    "DOCUMENTO_POSTERIOR_A_PETICAO",
+})
+_NIVEL_DA_SEVERIDADE = {BLOQUEIA: BLOCKING, ALERTA: WARNING, INFORMA: INFO}
 _PESQUISA = re.compile(r"\[(?:REQUIRES_LEGAL_RESEARCH|PESQUISAR PRECEDENTE|CONFERIR)[^\]]*\]", re.I)
 _IRDR = re.compile(r"\bIRDR\b|incidente de resolu[cç][aã]o de demandas repetitivas", re.I)
 _SECOES_DE_PEDIDO = {"CLAIMS", "VALUE"}
 
 
+def nivel_de(codigo: str, severidade: str) -> str:
+    if codigo in CODIGOS_CRITICOS:
+        return CRITICAL
+    return _NIVEL_DA_SEVERIDADE.get(severidade, WARNING)
+
+
 def _achado(auditor: str, codigo: str, severidade: str, secao: str = "", trecho: str = "", detalhe: str = "") -> dict[str, Any]:
-    return {"auditor": auditor, "codigo": codigo, "severidade": severidade, "secao": secao, "trecho": trecho[:220], "detalhe": detalhe[:400]}
+    nivel = nivel_de(codigo, severidade)
+    if nivel == CRITICAL:
+        severidade = BLOQUEIA
+    return {"auditor": auditor, "codigo": codigo, "severidade": severidade, "nivel": nivel, "secao": secao,
+            "trecho": trecho[:220], "detalhe": detalhe[:400]}
+
+
+def nivel(achado: dict[str, Any]) -> str:
+    """Nível de um achado (inclusive de rastro gravado antes dos níveis existirem)."""
+    return str(achado.get("nivel") or nivel_de(str(achado.get("codigo") or ""), str(achado.get("severidade") or "")))
 
 
 def _texto(s: dict[str, Any]) -> str:
@@ -253,9 +287,18 @@ def auditar_consistencia(secoes: list[dict[str, Any]], *, issues: dict[str, Any]
 
 def veredito(*relatorios: dict[str, Any]) -> dict[str, Any]:
     por_auditor = {}
+    niveis = dict.fromkeys(NIVEIS, 0)
     for r in relatorios:
-        bloqueios = [a for a in r["achados"] if a["severidade"] == BLOQUEIA]
+        bloqueios = [a for a in r["achados"] if a["severidade"] == BLOQUEIA or nivel(a) == CRITICAL]
+        criticos = [a for a in r["achados"] if nivel(a) == CRITICAL]
+        for a in r["achados"]:
+            niveis[nivel(a)] += 1
         por_auditor[r["auditor"]] = {"status": "FAIL" if bloqueios else "PASS", "bloqueios": len(bloqueios),
-                                     "alertas": len(r["achados"]) - len(bloqueios)}
+                                     "criticos": len(criticos), "alertas": len(r["achados"]) - len(bloqueios)}
     pronta = all(v["status"] == "PASS" for v in por_auditor.values())
-    return {"pronta": pronta, "status": "READY" if pronta else "BLOCKED", "auditores": por_auditor}
+    return {"pronta": pronta, "status": "READY" if pronta else "BLOCKED", "auditores": por_auditor,
+            "niveis": niveis, "critico": niveis[CRITICAL] > 0}
+
+
+def criticos(achados: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [a for a in achados if nivel(a) == CRITICAL]

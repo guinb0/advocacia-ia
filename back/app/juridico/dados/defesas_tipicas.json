@@ -1,0 +1,74 @@
+{
+  "versao": "2026-10-01",
+  "descricao": "Semente de contrateses: defesas plausíveis por instituto (ids de requisitos.json), com o requisito que cada uma ataca. O modelo parte delas e as ajusta aos fatos do caso; sem modelo, são usadas como estão. Sem número de artigo, súmula ou tema.",
+  "defesas": {
+    "responsabilidade_civil": [
+      {"defesa": "ausência de nexo causal: o evento não decorreu do trabalho", "requisito": "nexo"},
+      {"defesa": "culpa exclusiva da vítima ou fato de terceiro / força maior", "requisito": "culpa_ou_risco"},
+      {"defesa": "dano não comprovado ou mero aborrecimento", "requisito": "dano"}
+    ],
+    "assedio_moral": [
+      {"defesa": "cobranças dentro do poder diretivo, sem abuso", "requisito": "condutas_reiteradas"},
+      {"defesa": "fatos isolados, sem reiteração", "requisito": "condutas_reiteradas"},
+      {"defesa": "ausência de prova do dano psíquico", "requisito": "dano"}
+    ],
+    "horas_extras": [
+      {"defesa": "os cartões de ponto registram a jornada real e as horas extras foram pagas", "requisito": "jornada_efetiva"},
+      {"defesa": "compensação de jornada / banco de horas válido", "requisito": "sem_pagamento"},
+      {"defesa": "cargo de confiança ou trabalho externo sem controle de jornada", "requisito": "jornada_contratual"}
+    ],
+    "intervalo_intrajornada": [
+      {"defesa": "intervalo pré-assinalado e efetivamente usufruído", "requisito": "intervalo_suprimido"},
+      {"defesa": "redução do intervalo autorizada por norma coletiva", "requisito": "intervalo_suprimido"}
+    ],
+    "adicional_noturno": [
+      {"defesa": "trabalho noturno eventual ou adicional já pago", "requisito": "sem_pagamento"}
+    ],
+    "insalubridade": [
+      {"defesa": "EPIs fornecidos e eficazes neutralizaram o agente", "requisito": "sem_neutralizacao"},
+      {"defesa": "agente fora da classificação oficial ou abaixo do limite de tolerância", "requisito": "exposicao_agente"}
+    ],
+    "periculosidade": [
+      {"defesa": "exposição eventual ou por tempo extremamente reduzido", "requisito": "exposicao_permanente"},
+      {"defesa": "atividade não enquadrada como perigosa", "requisito": "atividade_perigosa"}
+    ],
+    "estabilidade_acidentaria": [
+      {"defesa": "não houve afastamento superior a 15 dias nem benefício acidentário", "requisito": "afastamento_beneficio"},
+      {"defesa": "doença sem nexo com o trabalho", "requisito": "acidente_ou_doenca"},
+      {"defesa": "dispensa após o fim do período de garantia", "requisito": "dispensa_no_periodo"}
+    ],
+    "doenca_ocupacional": [
+      {"defesa": "doença degenerativa ou preexistente, sem nexo com o trabalho", "requisito": "nexo_causal"},
+      {"defesa": "ausência de incapacidade atual", "requisito": "incapacidade"}
+    ],
+    "limbo_previdenciario": [
+      {"defesa": "o empregado não se apresentou para retornar ao trabalho", "requisito": "recusa_retorno"},
+      {"defesa": "o empregado recorreu da alta e permaneceu afastado por vontade própria", "requisito": "alta_inss"}
+    ],
+    "verbas_rescisorias": [
+      {"defesa": "verbas quitadas no TRCT dentro do prazo", "requisito": "nao_pagamento"},
+      {"defesa": "pedido de demissão ou justa causa afasta as verbas pedidas", "requisito": "termino"},
+      {"defesa": "contrato ainda ativo: não há verba rescisória a pagar", "requisito": "termino"}
+    ],
+    "rescisao_indireta": [
+      {"defesa": "falta não grave o bastante para romper o contrato", "requisito": "falta_grave"},
+      {"defesa": "perdão tácito pela demora em reagir", "requisito": "atualidade"}
+    ],
+    "vinculo_empregaticio": [
+      {"defesa": "trabalho autônomo, sem subordinação", "requisito": "subordinacao"},
+      {"defesa": "prestação eventual, sem habitualidade", "requisito": "habitualidade"},
+      {"defesa": "possibilidade de substituição (sem pessoalidade)", "requisito": "pessoalidade"}
+    ],
+    "equiparacao_salarial": [
+      {"defesa": "diferença de produtividade, perfeição técnica ou tempo na função", "requisito": "funcao_identica"},
+      {"defesa": "quadro de carreira válido", "requisito": "paradigma_ou_piso"}
+    ],
+    "fgts": [
+      {"defesa": "depósitos regulares conforme extrato", "requisito": "depositos_ausentes"}
+    ],
+    "beneficio_previdenciario": [
+      {"defesa": "perícia administrativa concluiu pela capacidade", "requisito": "incapacidade"},
+      {"defesa": "perda da qualidade de segurado ou carência não cumprida", "requisito": "qualidade_segurado"}
+    ]
+  }
+}

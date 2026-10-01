@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { CamadaJuridica as Dados } from "@/lib/agente";
+import { MotorJuridico } from "./MotorJuridico";
 
 const ROTULO_DECISAO: Record<string, string> = {
   SUPPORTED: "Incluída",
@@ -27,6 +28,9 @@ const ROTULO_GATE: Record<string, string> = {
   SEMANTIC_CONTRADICTION: "Contradição semântica",
   CITATION_GATE: "Citações",
   CROSS_SECTION: "Entre seções",
+  COUNTERARGUMENT: "Contrateses",
+  LEGAL_CERTAINTY: "Certeza jurídica",
+  PRECEDENT_QUALITY: "Qualidade dos precedentes",
 };
 
 const ROTULO_CHECK: Record<string, string> = {
@@ -111,7 +115,7 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
   const incluidas = dados.teses.filter((t) => t.decisao === "SUPPORTED");
   const naoIncluidas = dados.teses.filter((t) => t.decisao !== "SUPPORTED");
   const falhas = dados.falhas ?? [];
-  const sombra = dados.modo === "shadow";
+  const sombra = dados.modo === "shadow" || dados.modo === "assistido";
   const comparacao = dados.comparacao_com_legado;
 
   const canonico = dados.canonico;
@@ -140,7 +144,13 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
         aria-expanded={aberto}
       >
         <span>
-          Auditoria jurídica{sombra ? " (modo sombra — não alterou esta peça)" : ""} · {resumo} · {incluidas.length} de{" "}
+          Auditoria jurídica
+          {dados.modo === "assistido"
+            ? " (modo assistido — orientou o aprofundamento e gerou pendências)"
+            : sombra
+              ? " (modo sombra — não alterou esta peça)"
+              : ""}{" "}
+          · {resumo} · {incluidas.length} de{" "}
           {dados.teses.length} teses incluídas
         </span>
         <span aria-hidden>{aberto ? "▲" : "▼"}</span>
@@ -211,6 +221,7 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
                   <ul className="m-0 pl-4">
                     {lista.map((a, i) => (
                       <li key={i}>
+                        {a.nivel === "CRITICAL" && <strong className="text-red-700">CRÍTICO </strong>}
                         <strong>{a.codigo}</strong>
                         {a.secao && <span className="text-tinta-3"> [{a.secao}]</span>} {a.trecho && <>«{a.trecho}»</>}{" "}
                         {a.detalhe && <span className="text-tinta-3">— {a.detalhe}</span>}
@@ -221,6 +232,8 @@ export function CamadaJuridica({ dados }: { dados: Dados }) {
               ))}
             </Bloco>
           )}
+
+          {dados.raciocinio && <MotorJuridico dados={dados.raciocinio} pendencias={dados.pendencias_do_motor ?? []} />}
 
           {canonico && canonico.campos.length > 0 && (
             <Bloco titulo={`Dados canônicos (fonte única · petição em ${canonico.petition_date})`}>
