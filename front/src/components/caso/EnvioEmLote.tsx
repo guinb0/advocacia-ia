@@ -10,6 +10,8 @@ interface Props {
   enviando?: boolean;
   compacto?: boolean;
   simples?: boolean;
+  /** Progresso do envio em blocos, no modo `simples` (ex.: "Enviando 8 de 30…"). */
+  textoEnviando?: string;
 }
 
 function chave(arquivo: File): string {
@@ -17,7 +19,13 @@ function chave(arquivo: File): string {
   return `${arquivo.webkitRelativePath || arquivo.name}:${arquivo.size}:${arquivo.lastModified}`;
 }
 
-export default function EnvioEmLote({ onEnviar, enviando = false, compacto = false, simples = false }: Props) {
+export default function EnvioEmLote({
+  onEnviar,
+  enviando = false,
+  compacto = false,
+  simples = false,
+  textoEnviando,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const pastaRef = useRef<HTMLInputElement>(null);
   const fotosRef = useRef<HTMLInputElement>(null);
@@ -79,7 +87,7 @@ export default function EnvioEmLote({ onEnviar, enviando = false, compacto = fal
           style={{ minHeight: 56 }}
           onClick={() => fotosRef.current?.click()}
           processando={enviando}
-          textoProcessando="Enviando seus documentos…"
+          textoProcessando={textoEnviando ?? "Enviando seus documentos…"}
           dica="Mantenha esta página aberta até terminar"
         >
           Enviar fotos dos documentos

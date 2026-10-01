@@ -12,7 +12,8 @@ export interface ItemPortal {
   nome: string;
   observacao: string;
   obrigatorio: boolean;
-  status: "pendente" | "processando" | "conferir" | "entregue";
+  /** `recebido`: o arquivo chegou, mas a leitura falhou do nosso lado — o escritório resolve. */
+  status: "pendente" | "processando" | "conferir" | "recebido" | "entregue";
   enviados: number;
   /** Só vem preenchido quando o item precisa ser reenviado. */
   motivo: string;
@@ -38,6 +39,8 @@ export interface RespostaLotePortal {
   lote_id: string;
   recebidos: Array<{ arquivo: string; entrega_id: string }>;
   recusados: Array<{ arquivo: string; motivo: string }>;
+  /** Arquivos idênticos a outros que já estavam no caso — reenvio, não erro. */
+  ja_recebidos?: Array<{ arquivo: string }>;
   processando: boolean;
   situacao: SituacaoPortal;
 }
@@ -56,7 +59,7 @@ async function comoJson<T>(r: Response): Promise<T> {
       corpo && typeof corpo === "object" && "detail" in corpo
         ? String((corpo as { detail: unknown }).detail)
         : `Erro ${r.status}`;
-    throw new ApiError(detalhe);
+    throw new ApiError(detalhe, { status: r.status });
   }
   return corpo as T;
 }
