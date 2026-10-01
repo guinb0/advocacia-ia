@@ -479,7 +479,17 @@ export default function Roteiro({
   const conferido = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    obterRoteiro(codigo).then(setRoteiro).catch((e) => setErro(String(e)));
+    obterRoteiro(codigo)
+      .then((carregado) => {
+        const total = carregado.blocos.reduce((soma, b) => soma + b.perguntas.length, 0);
+        if (total === 0) {
+          console.error("roteiro sem perguntas", { codigo, blocos: carregado.blocos.length });
+          setErro("Não foi possível carregar o conteúdo deste roteiro: ele chegou sem perguntas.");
+          return;
+        }
+        setRoteiro(carregado);
+      })
+      .catch((e) => setErro(String(e)));
   }, [codigo]);
 
   /* O que a conferência precisa saber para NÃO cobrar à toa.
