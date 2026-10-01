@@ -922,9 +922,26 @@ def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
 MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 
 
+#: O plano é reforço da redação, não a peça: teto de saída e prazo TOTAL próprios. O timeout do httpx vale por
+#: leitura de socket, e uma resposta que pinga devagar passava dos 18% por minutos sem fim.
+MAX_TOKENS_PLANO = int(os.getenv("PETICAO_MAX_TOKENS_PLANO", "16000"))
+PRAZO_PLANO_S = float(os.getenv("PETICAO_PRAZO_PLANO_S", "150"))
+_EXECUTOR_PRAZO = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-prazo")
+
+
+def _com_prazo_total(chamada: Any, prazo_s: float) -> Any:
+    """Roda a chamada e desiste dela depois de `prazo_s` de relógio, qualquer que seja o estado do socket."""
+    futuro = _EXECUTOR_PRAZO.submit(contextvars.copy_context().run, chamada)
+    try:
+        return futuro.result(timeout=prazo_s)
+    except TimeoutError as erro:
+        futuro.cancel()
+        raise ErroPeticao(f"a chamada ao modelo passou de {prazo_s:.0f}s e foi abandonada") from erro
+
+
 def _llm_json(
     instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
-    repetir_apos_timeout: bool = True,
+    repetir_apos_timeout: bool = True, max_tokens: int | None = None,
 ) -> dict[str, Any]:
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
@@ -949,7 +966,7 @@ def _llm_json(
                 json={
                     "model": modelo,
                     "temperature": 0.2,
-                    "max_tokens": MAX_TOKENS_RESPOSTA,
+                    "max_tokens": max_tokens or MAX_TOKENS_RESPOSTA,
                     "response_format": {"type": "json_object"},
                     "messages": [
                         {"role": "system", "content": instrucao},
@@ -2076,7 +2093,10 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
     try:
         if caso_id:
             instrucao = _com_skill_do_escritorio(caso_id, instrucao)
-        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0, repetir_apos_timeout=False)
+        plano = _com_prazo_total(
+            lambda: _llm_json(instrucao, contexto[:60_000], timeout=90.0, repetir_apos_timeout=False,
+                              max_tokens=MAX_TOKENS_PLANO),
+            PRAZO_PLANO_S)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
         return None
