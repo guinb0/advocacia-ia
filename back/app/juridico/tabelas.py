@@ -74,34 +74,14 @@ def _markdown(cabecalho: list[str], linhas: list[list[Any]]) -> str:
     return "\n".join(saida)
 
 
-_DOC_NUMERADO = re.compile(r"^\s*Doc(?:umento)?\s*(\d+)\s*[.:\-–]?\s*(.*?)(?:\.(?:pdf|docx?|jpe?g|png|webp|tiff?))?\s*$", re.I)
-
-
-def rotulo_documento(nome: Any) -> str:
-    """«Doc 6. CTPS Digital.pdf» -> «Documento 6 — CTPS Digital»: nome de arquivo não vai para a peça."""
-    texto = str(nome or "").strip()
-    if not texto or texto == "-":
-        return "-"
-    if texto.lower() == "calculado pelo sistema":
-        return "memória de cálculo desta peça"
-    m = _DOC_NUMERADO.match(texto)
-    if m:
-        return f"Documento {m.group(1)}" + (f" — {m.group(2).strip()}" if m.group(2).strip() else "")
-    return re.sub(r"\.(?:pdf|docx?|jpe?g|png|webp|tiff?)$", "", texto, flags=re.I)
-
-
-def _rotulos(texto: Any) -> str:
-    return ", ".join(rotulo_documento(parte) for parte in str(texto or "").split(",") if parte.strip()) or "-"
-
-
 def _fonte(f: dict[str, Any]) -> str:
-    return _rotulos(f.get("documento") or f.get("fonte"))
+    return f.get("documento") or f.get("fonte") or "-"
 
 
 def base_e_fonte(c: dict[str, Any]) -> str:
     """Cada parâmetro do cálculo com o documento de onde saiu (fonte única) — o elo fato → pedido."""
     fontes = c.get("fontes") or {}
-    partes = [f"{f['rotulo']}: {f['exibir']} ({_rotulos(f['fonte'])})" for f in fontes.values() if f.get("exibir")]
+    partes = [f"{f['rotulo']}: {f['exibir']} ({f['fonte']})" for f in fontes.values() if f.get("exibir")]
     if any(nome not in fontes for nome in c.get("parametros") or {}):
         partes.append("demais parâmetros: análise do caso")
     return "; ".join(partes) or "análise do caso"
@@ -113,7 +93,7 @@ def construir(categoria: str, *, matriz: dict[str, Any], canon: dict[str, Any] |
     if categoria == "contrato":
         campos = [e for e in ((canon or {}).get("campos") or {}).values()
                   if e["certeza"] in canonico.UTILIZAVEIS and e["chave"] != "petition_date" and e.get("valor") not in (None, "")]
-        return _markdown(["Dado", "Valor", "Fonte"], [[e["rotulo"], canonico.exibir(e), _rotulos(e.get("documento") or e.get("fonte"))] for e in campos])
+        return _markdown(["Dado", "Valor", "Fonte"], [[e["rotulo"], canonico.exibir(e), e.get("documento") or e.get("fonte")] for e in campos])
     if categoria == "cronologia":
         datados = sorted((f for f in fatos if _data(f.get("data"))), key=lambda f: _data(f.get("data")))
         return _markdown(["Data", "Fato", "Fonte"], [[_data(f["data"]).strftime("%d/%m/%Y"), f["fato"][:200], _fonte(f)] for f in datados])
@@ -122,8 +102,8 @@ def construir(categoria: str, *, matriz: dict[str, Any], canon: dict[str, Any] |
         for f in fatos:
             for d in str(f.get("documento") or "").split(","):
                 if d.strip():
-                    por_doc.setdefault(rotulo_documento(d), []).append(str(f.get("fato") or f["id"])[:90].rstrip(" ."))
-        return _markdown(["Documento", "Fatos que comprova"], [[d, "; ".join(dict.fromkeys(textos))] for d, textos in sorted(por_doc.items())])
+                    por_doc.setdefault(d.strip(), []).append(f["id"])
+        return _markdown(["Documento", "Fatos que comprova"], [[d, ", ".join(ids)] for d, ids in sorted(por_doc.items())])
     if categoria == "memoria_de_calculo":
         validos = [c for c in calculos or [] if not c.get("erro") and c.get("valor") and str(c.get("unidade") or "BRL") == "BRL"]
         return _markdown(["Cálculo", "Rubrica", "Base e fonte", "Memória", "Resultado"],

@@ -33,12 +33,6 @@ _DOC = re.compile(r"\b(?:Doc(?:umento)?\.?\s*(?:n[ºo°.]?\s*)?\d{1,3})\b", re.I
 _INDICIO = re.compile(r"ind[íi]cio|indica|sugere|aponta\s+para|sinaliza", re.I)
 _PROVA_CABAL = re.compile(r"comprova(?:m)?\b|prova\s+cabal|demonstra\s+(?:de\s+forma\s+)?inequ[íi]voc|n[ãa]o\s+deixa\s+d[úu]vida|cabalmente", re.I)
 _SALARIO = re.compile(r"sal[áa]rio|remunera[çc][ãa]o|percebia|recebia\s+mensalmente", re.I)
-# Comparações aritméticas escritas na própria peça. Não dependem de tabela ou
-# de cálculo trabalhista: "R$ 6.121,61 é abaixo de R$ 5.000,00" é falso por si.
-_COMPARACAO_MONETARIA = re.compile(
-    r"R\$\s*([\d.]+,\d{2})[^.\n]{0,180}?\b(?:abaixo|inferior|menor)\s+(?:do|ao|à|a)?\s*(?:par[aâ]metro|limite|teto|valor)?[^R$\n]{0,80}R\$\s*([\d.]+,\d{2})",
-    re.I,
-)
 TAMANHO_MINIMO_TRECHO = 15
 
 
@@ -125,19 +119,6 @@ def _indicio_x_prova(frases: list[tuple[str, str]]) -> list[dict[str, Any]]:
             for doc, v in por_doc.items() if "indicio" in v and "prova" in v and v["indicio"][1] != v["prova"][1]]
 
 
-def _alegacoes_numericas(frases: list[tuple[str, str]]) -> list[dict[str, Any]]:
-    achados = []
-    for code, frase in frases:
-        for m in _COMPARACAO_MONETARIA.finditer(frase):
-            esquerdo, direito = calc.valor_numerico(m.group(1)), calc.valor_numerico(m.group(2))
-            if esquerdo is not None and direito is not None and esquerdo >= direito:
-                achados.append(_achado(
-                    AUDITOR, "ALEGACAO_NUMERICA_FALSA", BLOQUEIA, code, frase[:220],
-                    f"a afirmação exige {calc.brl(esquerdo)} < {calc.brl(direito)}, mas a comparação é falsa",
-                ))
-    return achados
-
-
 _INSTRUCAO_LLM = """Você revisa uma petição trabalhista procurando CONTRADIÇÕES INTERNAS: dois trechos da MESMA peça que
 afirmam coisas incompatíveis sobre o mesmo fato (datas, dinâmica do evento, quem fez o quê, natureza do vínculo,
 extensão de dano, valores). Argumento subsidiário («ainda que», «caso se entenda») não é contradição.
@@ -169,7 +150,7 @@ def _llm(secoes: list[dict[str, Any]], llm: Callable[[str, str], dict[str, Any]]
 def auditar(secoes: list[dict[str, Any]], *, canon: dict[str, Any] | None = None, calculos: list[dict[str, Any]] | None = None,
             matriz: dict[str, Any] | None = None, llm: Callable[[str, str], dict[str, Any]] | None = None) -> dict[str, Any]:
     frases = _frases(secoes)
-    achados = [*_familias(frases), *_base_salarial(frases, canon, calculos or [], matriz), *_indicio_x_prova(frases), *_alegacoes_numericas(frases)]
+    achados = [*_familias(frases), *_base_salarial(frases, canon, calculos or [], matriz), *_indicio_x_prova(frases)]
     rel: dict[str, Any] = {"camada_llm": "não pedida"}
     if llm is not None:
         try:

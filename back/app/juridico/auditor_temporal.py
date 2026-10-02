@@ -21,7 +21,7 @@ from .auditores import BLOQUEIA, _achado, _texto
 AUDITOR = "TEMPORAL"
 #: Data futura legítima: projeção, prazo, parcelas vincendas, termo final de pensão, estabilidade.
 _PROJECAO = re.compile(r"at[ée]\b|vincend|futur|projet|projeç|expectativa|termo\s+final|prazo|vencimento|ser[áa]\b|"
-                       r"completar[áa]|estabilidade|pr[óo]xim|previs[ãa]o", re.I)
+                       r"completar[áa]|estabilidade|pr[óo]xim|previs[ãa]o|a\s+partir\s+de", re.I)
 
 
 def _contexto(texto: str, inicio: int, largura: int = 80) -> str:

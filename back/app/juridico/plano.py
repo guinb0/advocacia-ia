@@ -35,16 +35,12 @@ def _pedido(pid: str, *, tipo: str, objeto: str, tese_origem: str, valor: float 
         "metodo_calculo": {"base": valor, "multiplicador": 1, "resultado": valor, "criterio": criterio, "deterministico": True} if valor else {},
         "tipo_de_item": "autonomo", "agrava": "", "agrava_id": "", "bem_juridico": "", "evento_causador": "", "dano": "", "objeto_economico": "",
         "origem": "issue_spotting",
-        "issue_id": tese_origem, "semantic_key": norm(tipo or objeto).upper().replace(" ", "_"), "no_request_reason": None,
     }
 
 
 #: Pedido de PAGAMENTO (exige valor líquido); pedido declaratório/de fazer/processual não.
 _MONETARIO = re.compile(r"pagamento|pagar|indeniza|multa|diferen[cç]a|adicional|horas?\s+extra|verbas|fgts|f[eé]rias|13[ºo°]|d[eé]cimo\s+terceiro|"
                         r"sal[aá]rio|aviso\s+pr[eé]vio|pens[aã]o|pensionamento|reembolso|ressarc|danos?\s+(?:morais|materiais|est[eé]ticos)", re.I)
-_PRAXE = re.compile(r"\b(cita[cç][aã]o|intima[cç][aã]o|comunica[cç][aã]o|notifica[cç][aã]o|"
-                    r"produ[cç][aã]o de prova|prova pericial|justi[cç]a gratuita|gratuidade|honor[aá]rios|"
-                    r"processamento|proced[êe]ncia|juntada|sigilo)\b", re.I)
 
 
 def monetario(pedido: dict[str, Any]) -> bool:
@@ -57,23 +53,10 @@ def monetario(pedido: dict[str, Any]) -> bool:
 def estruturar_pedidos(plano: dict[str, Any], issues: dict[str, Any], autoridades_por_tese: dict[str, list[Any]]) -> list[dict[str, Any]]:
     """Cada pedido no contrato estruturado {request_id, title, factual_support, authority_ids, calculation_id, value,
     reflexes, expert_evidence_required, status}. Os campos internos antigos continuam (o legado os lê)."""
-    incluidas = [t for t in issues.get("teses") or [] if t.get("decisao") == ts.INCLUIR]
-    por_tese_do_plano = {t.get("tese_plano_id"): t for t in incluidas if t.get("tese_plano_id")}
-    teses_do_plano = {str(t.get("id") or ""): t for t in plano.get("teses") or []}
+    por_tese_do_plano = {t.get("tese_plano_id"): t for t in issues.get("teses") or [] if t.get("tese_plano_id")}
     for p in plano.get("pedidos") or []:
         t = por_tese_do_plano.get(p.get("tese_origem")) or {}
-        # Pedidos herdados do outline podem ter perdido o vínculo textual com a
-        # tese. Faça o casamento uma vez, ANTES de finalizar o plano, e nunca no
-        # renderer ou auditor.
-        if not t:
-            base = teses_do_plano.get(str(p.get("tese_origem") or "")) or {}
-            alvo = f"{base.get('titulo') or ''} {p.get('tipo') or ''} {p.get('objeto') or ''}"
-            candidato = max(incluidas, key=lambda i: _similar(alvo, str(i.get("tese") or "")), default={})
-            if candidato and _similar(alvo, str(candidato.get("tese") or "")) >= 0.15:
-                t = candidato
-                p["tese_origem"] = str(candidato.get("tese_plano_id") or p.get("tese_origem") or "")
         valor = p.get("valor") if p.get("valor") not in (None, "") else None
-        de_praxe = bool(p.get("de_praxe")) or bool(_PRAXE.search(f"{p.get('tipo') or ''} {p.get('objeto') or ''}"))
         p.update({
             "request_id": p.get("id"),
             "title": str(p.get("tipo") or p.get("objeto") or "")[:120],
@@ -85,60 +68,15 @@ def estruturar_pedidos(plano: dict[str, Any], issues: dict[str, Any], autoridade
             "expert_evidence_required": bool(t.get("exige_pericia")),
             "unidade": "BRL",
             "status": "PENDING_CALCULATION" if monetario(p) and valor is None else "SUPPORTED",
-            "de_praxe": de_praxe,
-            "issue_id": str(t.get("id") or "") if t else "",
-            "semantic_key": norm(str(p.get("tipo") or p.get("title") or p.get("objeto") or "")).upper().replace(" ", "_"),
-            "no_request_reason": None,
         })
     return plano.get("pedidos") or []
-
-
-def retirar_pedidos_sem_vinculo(plano: dict[str, Any]) -> list[str]:
-    """Remove, antes da finalização, item legado que não conseguiu vínculo probatório/jurídico.
-
-    A remoção é deliberada e rastreável no planejador. Diferentemente do fluxo
-    antigo, renderer e auditor nunca omitem esse pedido depois que o plano já
-    está congelado.
-    """
-    pendencias: list[str] = []
-    mantidos: list[dict[str, Any]] = []
-    removidos: set[str] = set()
-    for p in plano.get("pedidos") or []:
-        pid = str(p.get("id") or p.get("request_id") or "?")
-        motivos: list[str] = []
-        if not p.get("de_praxe") and not p.get("factual_support"):
-            motivos.append("sem fato documental vinculado")
-        if not p.get("de_praxe") and not p.get("authority_ids"):
-            motivos.append("sem autoridade jurídica vinculada")
-        if monetario(p) and not p.get("calculation_id"):
-            motivos.append("sem cálculo canônico")
-        # Ausência de vínculo é diagnosticada no plano e volta como finding dos
-        # gates; não se apaga uma tese declaratória em silêncio. Já valor sem
-        # cálculo é estruturalmente impossível e, por isso, fica fora ANTES do
-        # congelamento.
-        if "sem cálculo canônico" in motivos:
-            removidos.add(pid)
-            pendencias.append(f"Pedido não incluído no PETITION_PLAN: {pid} — {', '.join(motivos)}")
-            continue
-        if motivos:
-            pendencias.append(f"Pedido pendente de vínculo no PETITION_PLAN: {pid} — {', '.join(motivos)}")
-        mantidos.append(p)
-    if removidos:
-        plano["pedidos"] = mantidos
-        for tese in plano.get("teses") or []:
-            if isinstance(tese.get("pedidos_ids"), list):
-                tese["pedidos_ids"] = [pid for pid in tese["pedidos_ids"] if pid not in removidos]
-        plano["valor_da_causa_calculado"] = calc.valor_da_causa(mantidos)
-    return pendencias
 
 
 def integrar(plano_est: dict[str, Any], issues: dict[str, Any], calculos: list[dict[str, Any]], matriz: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Plano estruturado + issue spotting + cálculos → (novo plano, pendências nomeadas)."""
     plano = copy.deepcopy(plano_est)
     plano.setdefault("teses", [])
-    # No strict o outline legado ainda fornece contexto/fatos, mas nunca pedidos.
-    # Requests nascem exclusivamente deste planejador, a partir de issues + cálculos.
-    plano["pedidos"] = [] if plano.get("_somente_motor_juridico") else plano.setdefault("pedidos", [])
+    plano.setdefault("pedidos", [])
     ref_para_f = {f["id"]: f.get("ref") for f in matriz.get("fatos") or [] if f.get("origem") == "plano" and f.get("ref")}
     por_tese = {c.get("tese_id"): c for c in calculos}
     pendencias: list[str] = []
@@ -156,7 +94,6 @@ def integrar(plano_est: dict[str, Any], issues: dict[str, Any], calculos: list[d
         monetario = bool(t["calculo"].get("rubrica"))
         if monetario and (c is None or c.get("erro") or not c.get("valor")):
             t["pendente_de_calculo"] = True
-            t["no_request_reason"] = "PENDING_CALCULATION"
             faltam = t["calculo"].get("parametros_faltantes") or [(c or {}).get("erro") or "parâmetros do cálculo"]
             pendencias.append(f"Calcular antes do protocolo: {t['tese']} — faltam {', '.join(faltam)}")
             continue
@@ -191,8 +128,6 @@ def integrar(plano_est: dict[str, Any], issues: dict[str, Any], calculos: list[d
             for x in plano["teses"]:
                 if x["id"] == tid:
                     x.setdefault("pedidos_ids", []).append(pid)
-        elif t["decisao"] == ts.INCLUIR:
-            t["no_request_reason"] = "ISSUE_SEM_PRETENSAO_AUTONOMA"
     for c in matriz.get("contradicoes") or []:
         versoes = " × ".join(f"«{v.get('valor', v.get('detalhe', ''))}»" for v in c["versoes"])
         pendencias.append(f"Contradição em {c['chave']}: {versoes} — confirmar a versão correta")

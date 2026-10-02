@@ -305,7 +305,7 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
     tese_ids = {p["tese_origem"] for p in peds}
     for t in plano.get("teses") or []:
         if t.get("gera_pedido", True) and t.get("consequencia") and t["id"] not in tese_ids:
-            saida.append(_v("TESE_SEM_PEDIDO", "CLAIMS", f"{t['id']} {t['titulo'][:50]}", f"A tese {t['id']} tem consequência jurídica mas nenhum pedido correspondente.", "Registre o pedido no ledger ou marque a tese como sem pedido."))
+            saida.append(_v("TESE_SEM_PEDIDO", "CLAIMS", f"{t['id']} {t['titulo'][:50]}", f"A tese {t['id']} tem consequência jurídica mas nenhum pedido correspondente.", "Registre o pedido no ledger ou marque a tese como sem pedido.", False))
     return saida
 
 
@@ -324,18 +324,6 @@ def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[
         )
     )
     saida: list[Violacao] = []
-    soma = soma_cumulativos(plano)
-    # A regra anterior só comparava o valor QUANDO o texto já continha a linha.
-    # Assim, uma inicial com pedidos líquidos e sem valor da causa escapava do
-    # gate inteiro — defeito formal que impede o protocolo trabalhista.
-    if soma and not ocorrencias:
-        saida.append(_v(
-            "VALOR_DA_CAUSA_AUSENTE",
-            "VALUE",
-            "",
-            "Há pedidos cumulativos com valor no ledger, mas o documento não declara o valor da causa.",
-            "Renderize uma única linha de valor da causa a partir da soma canônica dos pedidos cumulativos.",
-        ))
     if len(ocorrencias) > 1:
         saida.append(_v(
             "VALOR_DA_CAUSA_DUPLICADO",
@@ -344,6 +332,7 @@ def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[
             f"«Dá-se à causa» / valor da causa aparece {len(ocorrencias)} vezes na peça.",
             "Mantenha UMA linha de valor da causa, no fechamento; remova as demais.",
         ))
+    soma = soma_cumulativos(plano)
     if ocorrencias and soma and abs(_reais(ocorrencias[0].group(1)) - soma) > 0.01:
         saida.append(_v(
             "VALOR_DA_CAUSA_NAO_FECHA",
@@ -557,21 +546,6 @@ def repeticao_de_conteudo(secoes: list[dict[str, Any]], params: dict[str, Any]) 
 # ------------------------------------------------------------------ contradição de data (determinística) e candidatos semânticos
 
 _DATA_BR = re.compile(r"\b\d{2}/\d{2}/\d{4}\b")
-_TIPOS_DE_EVENTO = (
-    ("BENEFIT_START", re.compile(r"\b(?:benef[ií]cio|aux[ií]lio|NB\b|DIB\b|INSS)" , re.I)),
-    ("SURGERY", re.compile(r"\b(?:cirurgia|cir[uú]rgic)" , re.I)),
-    ("EXPERT_EXAM", re.compile(r"\b(?:per[ií]cia|pericial)" , re.I)),
-    ("ACCIDENT", re.compile(r"\b(?:acidente|assalto|queda|sinistro)" , re.I)),
-    ("ADMISSION", re.compile(r"\b(?:admiss[aã]o|admitid)" , re.I)),
-    ("DISMISSAL", re.compile(r"\b(?:dispensa|rescis[aã]o|demiss[aã]o)" , re.I)),
-)
-
-
-def _tipo_de_evento(texto: str) -> str:
-    for tipo, padrao in _TIPOS_DE_EVENTO:
-        if padrao.search(texto or ""):
-            return tipo
-    return ""
 
 
 def contradicao_de_data(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
@@ -580,14 +554,12 @@ def contradicao_de_data(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> 
     for f in plano.get("fatos") or []:
         datas = set(_DATA_BR.findall(f"{f.get('data', '')} {f.get('fato', '')}"))
         alvo = pp._tokens(re.sub(_DATA_BR, " ", f["fato"]))  # noqa: SLF001
-        event_type = str(f.get("event_type") or _tipo_de_evento(str(f.get("fato") or "")))
-        if len(datas) != 1 or len(alvo) < 3 or not event_type:
+        if len(datas) != 1 or len(alvo) < 3:
             continue
         for s in secoes:
             for frase in re.split(r"(?<=[.;])\s+", str(s.get("content") or "")):
                 em_frase = set(_DATA_BR.findall(frase))
-                mesmo_evento = _tipo_de_evento(frase) == event_type
-                if em_frase and mesmo_evento and not (em_frase & datas) and len(alvo & pp._tokens(frase)) / len(alvo) >= 0.6:  # noqa: SLF001
+                if em_frase and not (em_frase & datas) and len(alvo & pp._tokens(frase)) / len(alvo) >= 0.6:  # noqa: SLF001
                     saida.append(_v("CONTRADICAO_DE_DATA", str(s.get("code")), frase[:120],
                                     f"O fato {f['id']} tem data {sorted(datas)[0]} no caso, mas este trecho o descreve com {sorted(em_frase)[0]}.", "Use a data do CASE_FACTS."))
     return saida
@@ -690,23 +662,13 @@ _NAO_MONETARIO = re.compile(
     r"recolhimento|dep[óo]sito", re.I)
 
 
-_ESTABILIDADE = re.compile(r"estabilidad", re.I)
-_SUBSTITUTIVO_DA_ESTABILIDADE = re.compile(r"indeniza|pagamento|reintegr|sal[áa]rios?\s+do\s+per[íi]odo|convers", re.I)
-
-
-def _indenizacao_de_estabilidade(rotulo: str) -> bool:
-    """Estabilidade com o contrato ativo é declaratória: indenização substitutiva e reintegração pressupõem dispensa."""
-    return bool(_ESTABILIDADE.search(rotulo) and _SUBSTITUTIVO_DA_ESTABILIDADE.search(rotulo))
-
-
 def pedidos_rescisorios_com_vinculo_ativo(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[dict[str, Any]]:
     """Pedidos de verba rescisória sem término do contrato nos fatos e sem rescisão indireta pedida (vazio = nada a retirar)."""
     claims = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
     resto = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") != "CLAIMS")
     fatos = " ".join(str(f.get(k) or "") for f in plano.get("fatos") or [] if isinstance(f, dict) for k in ("descricao", "fato", "valor"))
     rescisorios = [p for p in plano.get("pedidos") or []
-                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")
-                   or _indenizacao_de_estabilidade(f"{p.get('tipo', '')} {p.get('objeto', '')}")]
+                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")]
     if not rescisorios:
         return []
     indireta = canonico.pede_rescisao_indireta([{"tese": f"{resto} {claims}"}, *({"tese": p.get("tipo", ""), "pedido": p.get("objeto", "")} for p in plano.get("pedidos") or [])])

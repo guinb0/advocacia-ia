@@ -11,14 +11,14 @@ Fluxo: matriz de fatos → issue spotting → pesquisa jurídica → cálculos �
 quatro auditores.
 
 `PETICAO_PIPELINE_JURIDICO_MODE`:
-  off     fluxo legado, permitido apenas por configuração explícita de compatibilidade.
+  off     (padrão) fluxo legado, sem a camada.
   shadow  a peça entregue é a do fluxo legado; a camada roda ao lado, audita essa peça e grava no
           trace o que mudaria (teses, citações, valor da causa). Não altera prontidão nem texto.
   strict  a peça é gerada pela camada. Falha em fatos, teses, autoridades, cálculos ou auditores
           impede a peça de ser marcada como pronta — nunca há queda silenciosa para o legado.
 `PETICAO_PIPELINE_JURIDICO=1` (nome antigo) equivale a strict.
 
-`PETICAO_MOTOR_JURIDICO` (padrão 1) — modo ASSISTIDO do fluxo legado (só quando o modo acima é explicitamente off): o motor
+`PETICAO_MOTOR_JURIDICO` (padrão 1) — modo ASSISTIDO do fluxo legado (só quando o modo acima é off): o motor
 (grafo, prova, contrateses, proposições, scores) roda em segundo plano; se ficar pronto a tempo, orienta o
 aprofundamento dos capítulos vulneráveis; no fim, audita a peça e põe lacunas, defesas e CRÍTICOS no relatório
 do advogado. Nunca derruba nem atrasa a geração além do teto curto de espera.
@@ -50,9 +50,7 @@ def modo() -> str:
         return bruto
     if os.getenv("PETICAO_PIPELINE_JURIDICO", "0").strip().lower() in ("1", "true", "sim", "on"):
         return STRICT
-    # Produção segura nasce no fluxo determinístico. O legado permanece acessível
-    # somente com PETICAO_PIPELINE_JURIDICO_MODE=off explícito.
-    return STRICT
+    return DESLIGADO
 
 
 def ativo() -> bool:

@@ -39,7 +39,6 @@ LOTE = 10
 _CACHE: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
 _CACHE_MAX = 5000
 _TRAVA = Lock()
-_CONTROLE_CONCENTRADO_NA_FRASE = re.compile(r"\b(?:ADC|ADI|ADPF|ADO)\s*\d+\b", re.I)
 
 
 def _h(texto: str) -> str:
@@ -159,25 +158,6 @@ def _avaliar_lote(llm: Callable[[str, str], dict[str, Any]], lote: list[dict[str
     return resultado
 
 
-def _frase_do_claim(texto: str, inicio: int) -> str:
-    """Menor contexto que contém a proposição atribuída à autoridade."""
-    de = max(texto.rfind(".", 0, inicio), texto.rfind("\n", 0, inicio)) + 1
-    fins = [p for p in (texto.find(".", inicio), texto.find("\n", inicio)) if p >= 0]
-    return texto[de:min(fins) if fins else len(texto)].strip()
-
-
-def _mapeamento_do_claim(texto: str, inicio: int, autoridade: Autoridade | None) -> dict[str, str]:
-    frase = _frase_do_claim(texto, inicio)
-    if autoridade is not None and autoridade.tipo == "artigo" and _CONTROLE_CONCENTRADO_NA_FRASE.search(frase):
-        return {"claim_id": _h(_compacto(frase)), "claim_type": "CASE_LAW_HOLDING",
-                "claim_role": "CONTEXTUAL_STATUTE", "required_authority_type": "controle_concentrado"}
-    if autoridade is not None and autoridade.tipo == "controle_concentrado":
-        return {"claim_id": _h(_compacto(frase)), "claim_type": "CASE_LAW_HOLDING",
-                "claim_role": "SUPPORTED_BY", "required_authority_type": "controle_concentrado"}
-    return {"claim_id": _h(_compacto(frase)), "claim_type": "LEGAL_PROPOSITION",
-            "claim_role": "SUPPORTED_BY", "required_authority_type": autoridade.tipo if autoridade else ""}
-
-
 def verificar(
     secoes: list[dict[str, Any]], registro: Any, data_referencia: date | None, *,
     llm: Callable[[str, str], dict[str, Any]] | None = None,
@@ -207,14 +187,13 @@ def verificar(
                 "sucessora": {"id": sucessora.id, "titulo": sucessora.titulo or sucessora.chave} if sucessora else None,
                 "transcricao": None,
             }
-            reg.update(_mapeamento_do_claim(texto, c.inicio, a))
             if existe and not superada and a is not None and c.tipo == "artigo":
                 literal = transcricao(texto, c)
                 problema = conferir_transcricao(literal, a, registro) if literal else None
                 if problema:
                     reg["transcricao"] = {"codigo": problema[0], "motivo": problema[1], "trecho": literal[:300]}
             registros.append(reg)
-            if existe and not superada and a is not None and reg["claim_role"] != "CONTEXTUAL_STATUTE":
+            if existe and not superada and a is not None:
                 texto_oficial = (a.texto or a.tese or "").strip()
                 if not texto_oficial:
                     reg.update(classificacao=NO_SUPPORT, motivo="autoridade sem texto oficial no Acervo")
@@ -248,11 +227,7 @@ def verificar(
     achados: list[dict[str, Any]] = []
     for reg in registros:
         classe = reg["classificacao"]
-        contextual = reg.get("claim_role") == "CONTEXTUAL_STATUTE"
-        reg["checks"]["SUPPORTS_CLAIM"] = True if contextual else {EXACT_SUPPORT: True, PARTIAL_SUPPORT: bool(reg["justificativa"])}.get(classe, None if classe == NAO_AVALIADO else False)
-        if contextual and classe == NAO_AVALIADO:
-            reg["classificacao"] = CONTEXT_ONLY
-            classe = CONTEXT_ONLY
+        reg["checks"]["SUPPORTS_CLAIM"] = {EXACT_SUPPORT: True, PARTIAL_SUPPORT: bool(reg["justificativa"])}.get(classe, None if classe == NAO_AVALIADO else False)
         reg["aprovada"] = bool(reg["checks"]["EXISTS"] and reg["checks"]["VALID_ON_DATE"] is True and reg["checks"]["NOT_SUPERSEDED"]
                                and reg["checks"]["SUPPORTS_CLAIM"] is True)
         if reg["authority_id"] is None:
@@ -276,7 +251,7 @@ def verificar(
                                        "a verificação de sustentação (entailment) não executou" + (f": {erro_llm}" if erro_llm else "")))
             elif classe == CONTRADICTS:
                 achados.append(_achado(AUDITOR, "CITACAO_CONTRADIZ_A_AFIRMACAO", BLOQUEIA, reg["secao"], reg["trecho"], reg["justificativa"] or reg["motivo"]))
-            elif classe in (NO_SUPPORT, CONTEXT_ONLY) and not contextual:
+            elif classe in (NO_SUPPORT, CONTEXT_ONLY):
                 achados.append(_achado(AUDITOR, "CITACAO_NAO_SUSTENTA_A_AFIRMACAO", BLOQUEIA, reg["secao"], reg["trecho"],
                                        f"{classe}: " + (reg["motivo"] or reg["justificativa"] or "o texto oficial não sustenta o que a peça afirma")))
             elif classe == PARTIAL_SUPPORT and not reg["justificativa"]:

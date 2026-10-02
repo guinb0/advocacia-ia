@@ -23,21 +23,6 @@ _REAIS = re.compile(r"R\$\s*([\d.]+,\d{2}|[\d.]+)")
 _DATA = re.compile(r"\b(\d{2})/(\d{2})/(\d{4})\b")
 _HORA = re.compile(r"\b(\d{1,2})\s*(?:h|:)\s*(\d{2})?\b")
 _PAGINA = re.compile(r"(?:---\s*)?(?:p[aá]gina|p[aá]g\.?|page|fls?\.?)\s*(\d{1,4})", re.I)
-_EVENTOS = (
-    ("BENEFIT_START", re.compile(r"\b(?:benef[ií]cio|aux[ií]lio|NB\b|DIB\b|INSS)" , re.I)),
-    ("SURGERY", re.compile(r"\b(?:cirurgia|cir[uú]rgic)" , re.I)),
-    ("EXPERT_EXAM", re.compile(r"\b(?:per[ií]cia|pericial)" , re.I)),
-    ("ACCIDENT", re.compile(r"\b(?:acidente|assalto|queda|sinistro)" , re.I)),
-    ("ADMISSION", re.compile(r"\b(?:admiss[aã]o|admitid)" , re.I)),
-    ("DISMISSAL", re.compile(r"\b(?:dispensa|rescis[aã]o|demiss[aã]o)" , re.I)),
-)
-
-
-def tipo_de_evento(texto: str) -> str:
-    for tipo, padrao in _EVENTOS:
-        if padrao.search(texto or ""):
-            return tipo
-    return ""
 
 
 def reais(texto: str) -> float | None:
@@ -117,12 +102,9 @@ def montar(
     fatos: list[dict[str, Any]] = []
 
     def novo(**campos: Any) -> dict[str, Any]:
-        f = {"id": f"M{len(fatos) + 1:03d}", "event_id": "", "event_type": "", "subject": "", "fato": "", "chave": "", "valor": "", "fonte": "", "documento": "",
+        f = {"id": f"M{len(fatos) + 1:03d}", "fato": "", "chave": "", "valor": "", "fonte": "", "documento": "",
              "pagina": "", "confianca": "baixa", "estado": INFERIDO, "contradicoes": [], "origem": "", "ref": ""}
         f.update(campos)
-        f["event_id"] = str(f.get("event_id") or f["id"])
-        f["event_type"] = str(f.get("event_type") or tipo_de_evento(str(f.get("fato") or "")))
-        f["subject"] = str(f.get("subject") or f.get("chave") or f.get("fato") or "")[:160]
         fatos.append(f)
         return f
 

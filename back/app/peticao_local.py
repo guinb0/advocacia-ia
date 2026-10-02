@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import contextvars
-import functools
-import copy
 from collections import Counter
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
-from concurrent.futures import wait as futures_wait
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import statistics
@@ -64,8 +61,6 @@ from .juridico import raciocinio as juridico_raciocinio
 from .juridico import render as juridico_render
 from .juridico import repositorio as juridico_repo
 from .juridico import teses as juridico_teses
-from .juridico import imutabilidade as juridico_imutabilidade
-from .juridico import case_state as juridico_case_state
 
 log = logging.getLogger("peticao_local")
 
@@ -418,7 +413,7 @@ def _ocr_do_caso(caso_id: str) -> str:
 
 def _lintar_e_corrigir(
     caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], *, texto_do_caso: str, textos_do_acervo: list[str],
-    material: str = "", texto_dos_autos: str = "", permitir_mutacoes: bool = True,
+    material: str = "", texto_dos_autos: str = "",
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
     """AUDITOR FINAL: verificações determinísticas + auditoria semântica independente, com correção e limite de iterações."""
     params = peticao_skill_arquivos.validacoes_da_skill()["parametros"]
@@ -442,22 +437,6 @@ def _lintar_e_corrigir(
             return {}  # sem tempo: o auditor por modelo cede lugar às verificações determinísticas
         return _llm_json(instrucao, entrada, timeout=240.0)
 
-    # No fluxo estrito, auditor é detector. Ele não reescreve prose nem troca o
-    # ledger: uma mudança jurídica exige voltar ao planejador e criar um novo
-    # PETITION_PLAN, com novo hash e rastreabilidade.
-    if not permitir_mutacoes:
-        achados = verificacoes(secoes, plano_est)
-        semanticos = auditor_final.auditar_com_modelo(chamar, cf, plano_est, secoes,
-                                                       [a for a in achados if a.codigo == "SOBREPOSICAO_SEMANTICA_CANDIDATA"])
-        achados += semanticos
-        criticos = [a for a in achados if a.bloqueia]
-        return secoes, achados, {
-            "iteracoes": [{"n": 1, "modo": "read_only", "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]}],
-            "pendencias_humanas": [f"{a.codigo}:{a.secao} — {a.motivo}"[:260] for a in criticos],
-            "liberada": not criticos,
-            "mutacoes_desligadas": True,
-        }
-
     return auditor_final.executar(
         secoes, plano_est, cf, params=params, verificacoes=verificacoes, max_iteracoes=2,
         chamar=chamar,
@@ -468,7 +447,6 @@ def _lintar_e_corrigir(
 
 def _validar_documento_final(
     caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], texto_do_caso: str, *, max_rodadas: int = 1,
-    permitir_mutacoes: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[Any]]:
     """higieniza (determinístico) → valida o artefato final → corrige o que for corrigível → higieniza e valida de NOVO.
 
@@ -492,7 +470,7 @@ def _validar_documento_final(
                                "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]})
         if higiene.get("metadata_interna_removida"):
             rel.setdefault("metadata_interna", []).extend(higiene["metadata_interna_removida"])
-        if not permitir_mutacoes or not criticos or rodada == max_rodadas or _sem_tempo(folga_s=120):
+        if not criticos or rodada == max_rodadas or _sem_tempo(folga_s=120):
             break
         por_secao: dict[str, list[Any]] = {}
         for a in criticos:
@@ -624,35 +602,13 @@ _SOLICITACAO_EM_CURSO: contextvars.ContextVar[str | None] = contextvars.ContextV
 PASSOS_GERACAO = 100
 
 
-_EM_EXECUCAO: set[str] = set()
-#: Passado este tempo sem concluir, a solicitação é dada como perdida (thread travada ou processo reiniciado).
-LIMITE_SOLICITACAO_S = float(os.getenv("PETICAO_LIMITE_SOLICITACAO_S", "1500"))
-_CARENCIA_ORFA_S = 20.0
-
-
 def marcar_solicitacao_em_curso(solicitacao_id: str | None) -> contextvars.Token[str | None]:
     """Usado pela rota assíncrona: a thread de fundo aponta o progresso para este id."""
-    if solicitacao_id:
-        _EM_EXECUCAO.add(solicitacao_id)
     return _SOLICITACAO_EM_CURSO.set(solicitacao_id)
 
 
 def limpar_solicitacao_em_curso(token: contextvars.Token[str | None]) -> None:
-    _EM_EXECUCAO.discard(_SOLICITACAO_EM_CURSO.get() or "")
     _SOLICITACAO_EM_CURSO.reset(token)
-
-
-def _solicitacao_perdida(solicitacao: dict[str, Any]) -> str:
-    """A geração roda numa thread deste processo: reinício ou travamento deixam a linha em andamento para sempre."""
-    try:
-        idade = (datetime.now(timezone.utc) - datetime.fromisoformat(str(solicitacao.get("solicitada_em")))).total_seconds()
-    except (TypeError, ValueError):
-        return ""
-    if idade > LIMITE_SOLICITACAO_S:
-        return "A geração passou do tempo limite sem concluir. Gere a petição novamente."
-    if idade > _CARENCIA_ORFA_S and str(solicitacao.get("id")) not in _EM_EXECUCAO:
-        return "A geração foi interrompida (o servidor foi reiniciado durante a redação). Gere a petição novamente."
-    return ""
 
 
 def avancar_etapa(etapa: str, passo: int, total: int = PASSOS_GERACAO) -> None:
@@ -917,28 +873,6 @@ def carregar(caso_id: str) -> dict[str, Any] | None:
 
 @skill_peticao.com_skill_do_caso
 def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
-    # Nenhum caminho de edição/exportação pode conservar READY de uma versão
-    # anterior: revalida o texto que efetivamente será persistido. A geração
-    # completa já fez auditorias mais profundas; isto é a rede determinística
-    # comum a geração, edição humana e revisões automáticas.
-    secoes = [s for s in dados.get("sections") or [] if s.get("code") != "JURIMETRY"]
-    if secoes:
-        try:
-            _, violacoes, _ = _conferir_contra_os_autos(caso_id, secoes, corrigir=False)
-            _aplicar_conferencia(dados, secoes, violacoes)
-            if any(v.bloqueia for v in violacoes):
-                prontidao = dados.setdefault("readiness", {})
-                prontidao["ready"] = False
-                prontidao["status"] = "BLOCKED"
-                prontidao.setdefault("blocking_issues", []).extend(
-                    f"[{v.codigo}] {v.motivo}"[:200] for v in violacoes if v.bloqueia
-                )
-        except Exception:  # noqa: BLE001 - falha de conferência também não autoriza READY
-            dados.setdefault("readiness", {})["ready"] = False
-            dados["readiness"]["status"] = "BLOCKED"
-            dados["readiness"].setdefault("blocking_issues", []).append(
-                "Conferência final não executou; protocolo bloqueado."
-            )
     dados["updated_at"] = _agora()
     dados["docx_style_version"] = DOCX_STYLE_VERSION
     armazenamento.salvar_peticao_local(
@@ -965,120 +899,13 @@ def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
 MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 
 
-#: O plano é reforço da redação, não a peça: teto de saída e prazo TOTAL próprios. O timeout do httpx vale por
-#: leitura de socket, e uma resposta que pinga devagar passava dos 18% por minutos sem fim.
-MAX_TOKENS_PLANO = int(os.getenv("PETICAO_MAX_TOKENS_PLANO", "16000"))
-PRAZO_PLANO_S = float(os.getenv("PETICAO_PRAZO_PLANO_S", "150"))
-_EXECUTOR_PRAZO = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-prazo")
-_EXECUTOR_PROVEDOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm-provedor")
-
-
-def _com_prazo_total(chamada: Any, prazo_s: float) -> Any:
-    """Roda a chamada e desiste dela depois de `prazo_s` de relógio, qualquer que seja o estado do socket."""
-    futuro = _EXECUTOR_PRAZO.submit(contextvars.copy_context().run, chamada)
-    try:
-        return futuro.result(timeout=prazo_s)
-    except TimeoutError as erro:
-        futuro.cancel()
-        raise ErroPeticao(f"a chamada ao modelo passou de {prazo_s:.0f}s e foi abandonada") from erro
-
-
-#: DeepSeek lento ou fora do ar não pode parar a peça (18/09 e 01/10: um "oi" levava mais de 40 s). Passado este
-#: tempo sem resposta, a OpenAI é chamada em paralelo e vale quem responder primeiro com sucesso.
-ATRASO_RESERVA_S = float(os.getenv("PETICAO_ATRASO_RESERVA_S", "60"))
-#: Pedido grande demora de verdade (140 mil caracteres de entrada levam ~90 s): o atraso cresce com ele.
-ATRASO_POR_MIL_CARACTERES_S = float(os.getenv("PETICAO_ATRASO_POR_MIL_S", "0.4"))
-MODELO_RESERVA = os.getenv("PETICAO_MODELO_RESERVA", "") or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
-
-
-def _reserva_configurada() -> tuple[str, str] | None:
-    chave = os.getenv("OPENAI_API_KEY", "").strip()
-    if not chave:
-        return None
-    return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"), chave
-
-
-def _chamar_provedor(fornecedor: str, base: str, chave: str, modelo: str, instrucao: str, entrada: str,
-                     max_tokens: int | None, timeout: float) -> dict[str, Any]:
-    teto = max_tokens or MAX_TOKENS_RESPOSTA
-    corpo: dict[str, Any] = {
-        "model": modelo,
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": instrucao}, {"role": "user", "content": entrada[:120_000]}],
-    }
-    if fornecedor == "openai":
-        corpo["max_completion_tokens"] = min(teto, 64000)
-    else:
-        corpo["temperature"] = 0.2
-        corpo["max_tokens"] = teto
-    inicio = time.monotonic()
-    resposta = httpx.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {chave}"}, json=corpo,
-                          timeout=timeout)
-    resposta.raise_for_status()
-    custos_api.registrar(fornecedor, modelo, "geracao_peticao", resposta,
-                         latencia_ms=round((time.monotonic() - inicio) * 1000))
-    return resposta.json()["choices"][0]
-
-
-def _escolha_com_reserva(base: str, chave: str, modelo: str, instrucao: str, entrada: str,
-                         max_tokens: int | None, timeout: float, *, reserva_permitida: bool) -> dict[str, Any]:
-    reserva = _reserva_configurada() if reserva_permitida else None
-    if reserva is None:
-        return _chamar_provedor("deepseek", base, chave, modelo, instrucao, entrada, max_tokens, timeout)
-
-    def lancar(fornecedor: str, b: str, c: str, m: str) -> Any:
-        return _EXECUTOR_PROVEDOR.submit(contextvars.copy_context().run, _chamar_provedor, fornecedor, b, c, m,
-                                      instrucao, entrada, max_tokens, timeout)
-
-    atraso = ATRASO_RESERVA_S + ATRASO_POR_MIL_CARACTERES_S * (len(instrucao) + len(entrada)) / 1000
-    pendentes = {lancar("deepseek", base, chave, modelo)}
-    reserva_lancada = False
-    limite = time.monotonic() + timeout
-    ultimo_erro: Exception | None = None
-    while pendentes:
-        espera = limite - time.monotonic()
-        if espera <= 0:
-            break
-        prazo = min(espera, atraso) if not reserva_lancada else espera
-        prontos, pendentes = futures_wait(pendentes, timeout=prazo, return_when=FIRST_COMPLETED)
-        for futuro in prontos:
-            try:
-                return futuro.result()
-            except Exception as erro:  # noqa: BLE001
-                ultimo_erro = erro
-        if not reserva_lancada and (not prontos or not pendentes):
-            reserva_lancada = True
-            log.warning("petição local: DeepSeek lento ou com erro (%s); chamando a OpenAI em paralelo", ultimo_erro or "sem resposta")
-            pendentes.add(lancar("openai", reserva[0], reserva[1], MODELO_RESERVA))
-    for futuro in pendentes:
-        futuro.cancel()
-    raise ultimo_erro or httpx.ReadTimeout("nenhum provedor respondeu a tempo")
-
-
 def _llm_json(
-    instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
-    repetir_apos_timeout: bool = True, max_tokens: int | None = None,
+    instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None
 ) -> dict[str, Any]:
-    # Homologação e contingência: permite usar OpenAI como provedor primário,
-    # sem iniciar nem aguardar uma chamada DeepSeek degradada.
-    if os.getenv("PETICAO_FORNECEDOR", "").strip().lower() == "openai":
-        reserva = _reserva_configurada()
-        if reserva is None:
-            raise ErroPeticao("OPENAI_API_KEY ausente — não é possível usar OpenAI como provedor primário.")
-        base_openai, chave_openai = reserva
-        modelo_openai = modelo or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
-        escolha = _chamar_provedor("openai", base_openai, chave_openai, modelo_openai,
-                                   instrucao, entrada, max_tokens, timeout)
-        conteudo = escolha["message"]["content"]
-        try:
-            return json.loads(conteudo)
-        except json.JSONDecodeError as erro:
-            raise ErroPeticao("OpenAI retornou JSON inválido.") from erro
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
         raise ErroPeticao("DEEPSEEK_API_KEY ausente — configure no .env.")
     base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-    reserva_permitida = modelo is None
     modelo = modelo or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     # Duas tentativas, não uma: um pedido grande — criar um tópico novo reescreve
     # a peça inteira — já leva dezenas de segundos, e um timeout de rede isolado
@@ -1092,8 +919,25 @@ def _llm_json(
     for tentativa in (1, 2):
         inicio_chamada = time.monotonic()
         try:
-            escolha = _escolha_com_reserva(base, chave, modelo, instrucao, entrada, max_tokens, timeout,
-                                           reserva_permitida=reserva_permitida)
+            resposta = httpx.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {chave}"},
+                json={
+                    "model": modelo,
+                    "temperature": 0.2,
+                    "max_tokens": MAX_TOKENS_RESPOSTA,
+                    "response_format": {"type": "json_object"},
+                    "messages": [
+                        {"role": "system", "content": instrucao},
+                        {"role": "user", "content": entrada[:120_000]},
+                    ],
+                },
+                timeout=timeout,
+            )
+            resposta.raise_for_status()
+            custos_api.registrar("deepseek", modelo, "geracao_peticao", resposta,
+                                 latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
+            escolha = resposta.json()["choices"][0]
             conteudo = escolha["message"]["content"]
             if escolha.get("finish_reason") == "length":
                 # Cortado pelo teto de saída: o JSON chega sem fechar. Dizer "não
@@ -1119,9 +963,6 @@ def _llm_json(
             log.warning(
                 "petição local: LLM falhou (tentativa %s/2): %s", tentativa, erro
             )
-            # Etapa opcional que já esperou o prazo inteiro: repetir dobraria a espera com a tela parada.
-            if not repetir_apos_timeout and isinstance(erro, httpx.TimeoutException):
-                break
             continue
         if not isinstance(saida, dict):
             # JSON válido que não é objeto (uma lista, um número) quebraria adiante,
@@ -1316,34 +1157,7 @@ def _com_skill_do_escritorio(caso_id: str, instrucao: str, *, revisao: bool = Fa
     return "\n\n".join(blocos)
 
 
-#: Leitura dos documentos guardada durante UMA geração (`gerar` liga): a mesma geração consultava o inventário e
-#: todas as extrações do caso no SQL Server seis ou mais vezes. Fora de `gerar` não há cache.
-_DOCUMENTOS_DA_GERACAO: ContextVar[dict[str, Any] | None] = ContextVar("documentos_da_geracao", default=None)
-
-
 def documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    guardados = _DOCUMENTOS_DA_GERACAO.get()
-    if guardados is not None and caso_id in guardados:
-        ledger, documentos = guardados[caso_id]
-        return list(ledger), list(documentos)
-    resultado = _ler_documentos_logicos(caso_id)
-    if guardados is not None:
-        guardados[caso_id] = resultado
-    return list(resultado[0]), list(resultado[1])
-
-
-def _com_documentos_da_geracao(funcao: Any) -> Any:
-    @functools.wraps(funcao)
-    def envolvida(*args: Any, **kwargs: Any) -> Any:
-        marca = _DOCUMENTOS_DA_GERACAO.set({})
-        try:
-            return funcao(*args, **kwargs)
-        finally:
-            _DOCUMENTOS_DA_GERACAO.reset(marca)
-    return envolvida
-
-
-def _ler_documentos_logicos(caso_id: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """(DOCUMENT_LEDGER, texto de cada documento LÓGICO na ordem do ledger).
 
     O ledger é o inventário dos anexos, não o inventário do OCR.  Antes, um
@@ -1600,7 +1414,7 @@ def _identidade_do_reclamante(caso_id: str, caso: dict[str, Any]) -> list[str]:
     ]
 
 
-def _montar_contexto(caso_id: str, texto_entrevista: str, *, brief: dict[str, Any] | None = None) -> str:
+def _montar_contexto(caso_id: str, texto_entrevista: str) -> str:
     caso = armazenamento.obter_caso(caso_id) or {}
     situacao = casos_ocr.montar_situacao(caso_id) or {}
     categoria = (
@@ -1629,7 +1443,7 @@ def _montar_contexto(caso_id: str, texto_entrevista: str, *, brief: dict[str, An
     # o case brief antes dos vinte documentos inteiros, a busca por embeddings
     # parte dos fatos e provas do CASO, não do texto cru dos anexos.
     try:
-        linhas.append("\n" + case_brief.para_prompt(brief if brief is not None else case_brief.montar(caso_id)))
+        linhas.append("\n" + case_brief.para_prompt(case_brief.montar(caso_id)))
     except Exception as erro:
         log.warning("petição local: case brief indisponível no contexto: %s", erro)
     # A ANÁLISE DOCUMENTAL (skill documental) chega à geração como MATERIAL do caso — fatos com
@@ -2208,10 +2022,7 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
     try:
         if caso_id:
             instrucao = _com_skill_do_escritorio(caso_id, instrucao)
-        plano = _com_prazo_total(
-            lambda: _llm_json(instrucao, contexto[:60_000], timeout=90.0, repetir_apos_timeout=False,
-                              max_tokens=MAX_TOKENS_PLANO),
-            PRAZO_PLANO_S)
+        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
         return None
@@ -2346,7 +2157,7 @@ def _conferir_contra_os_autos(
     material: str = "",
     corrigir: bool = True,
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
-    """Confere a peça contra os autos e corrige cada achado corrigível.
+    """Confere a peça contra os autos e, se `corrigir`, pede UMA rodada de correção.
 
     Devolve as seções (corrigidas e com as citações não verificadas carimbadas), as
     violações que SOBRARAM e o registro do que aconteceu, para o trace da geração.
@@ -2361,15 +2172,16 @@ def _conferir_contra_os_autos(
     corrigiu = False
     rodadas = 0
     secoes_puladas: list[str] = []
-    # Um gate não pode ser parcial: deixar VALUE ou CLAIMS fora da correção por
-    # limite de conveniência foi exatamente o que permitiu valores incompatíveis
-    # chegarem à minuta. Cada rodada trata todas as seções afetadas, em lotes
-    # pequenos para não sobrecarregar o provedor; o resultado é sempre conferido
-    # de novo antes de avançar.
-    max_rodadas = int(os.getenv("PETICAO_CONFERENCIA_MAX_RODADAS", "3"))
-    tamanho_lote = int(os.getenv("PETICAO_CONFERENCIA_LOTE_SECOES", "3"))
-    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < max_rodadas and not _sem_tempo(folga_s=120):
+    # UMA rodada, seções EM PARALELO: era aqui que a geração passava mais tempo ("Conferindo a peça contra os
+    # autos…") — duas rodadas, uma seção por vez, cada chamada com o material inteiro. O que sobrar é revisto
+    # pelo auditor final, que roda de novo a mesma conferência logo adiante.
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=180):
         rodadas += 1
+        # A primeira conferência é determinística e sempre roda. A reescrita por
+        # modelo é uma tentativa de conveniência, não pode transformar uma peça
+        # já gerada em uma espera de vários minutos (nem em falha por sobrecarga
+        # do provedor). Dois blocos cobrem os erros de maior impacto sem mandar a
+        # mesma base de 80 mil caracteres para seis chamadas simultâneas.
         por_secao = {
             str(secao.get("code") or ""): [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
             for secao in secoes
@@ -2381,25 +2193,29 @@ def _conferir_contra_os_autos(
                 -len(por_secao[str(s.get("code") or "")]),
             )
         )
-        secoes_puladas = []
-        novas_por_codigo: dict[str, dict[str, Any]] = {}
-        for inicio in range(0, len(alvos), max(1, tamanho_lote)):
-            lote = alvos[inicio:inicio + max(1, tamanho_lote)]
-            extra = _material_para_resolver_pesquisas(violacoes, lote)
+        alvos = alvos[:2]
+        secoes_puladas = [
+            str(s.get("code") or "") for s in secoes
+            if por_secao.get(str(s.get("code") or "")) and s not in alvos
+        ]
+        extra = _material_para_resolver_pesquisas(violacoes, alvos)
 
-            def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
-                da_secao = por_secao.get(str(secao.get("code") or ""), [])
-                novo = _reescrever_secao(
-                    caso_id, secao,
-                    conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
-                    material[:35_000],
-                )
-                return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
+        def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
+            da_secao = por_secao.get(str(secao.get("code") or ""), [])
+            if not da_secao:
+                return secao
+            novo = _reescrever_secao(
+                caso_id,
+                secao,
+                conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
+                material[:35_000],
+            )
+            return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
 
-            novas_por_codigo.update({
-                str(secao.get("code") or ""): corrigida
-                for secao, corrigida in zip(lote, _em_paralelo_com_contexto(corrigir_secao, lote, max_workers=len(lote)))
-            })
+        novas_por_codigo = {
+            str(secao.get("code") or ""): corrigida
+            for secao, corrigida in zip(alvos, _em_paralelo_com_contexto(corrigir_secao, alvos, max_workers=2))
+        }
         novas = [novas_por_codigo.get(str(secao.get("code") or ""), secao) for secao in secoes]
         if novas == secoes:
             break
@@ -2831,7 +2647,6 @@ def _reconferir(caso_id: str, dados: dict[str, Any]) -> None:
 
 
 @skill_peticao.com_skill_do_caso
-@_com_documentos_da_geracao
 def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     """Analisa e redige em uma chamada única à DeepSeek."""
     generation_id = str(uuid.uuid4())
@@ -2850,18 +2665,17 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
             for r in regras_aplicadas
         ], confidence=max((float(r.get("confidence") or 0) for r in regras_aplicadas), default=None),
     )
+    contexto = _montar_contexto(caso_id, texto_entrevista)
+    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     try:
         brief = case_brief.montar(caso_id)
     except Exception as erro:
         log.warning("petição local: case brief indisponível para trace/cobertura: %s", erro)
         brief = None
-    contexto = _montar_contexto(caso_id, texto_entrevista, brief=brief)
-    avancar_etapa("Montando o resumo jurídico do caso…", 12)
     nome_categoria, codigo_categoria = _nome_e_codigo_da_categoria(caso_id)
     # O plano (teses + fatos + provas) vem ANTES da recuperação: é dele que saem as consultas.
     avancar_etapa("Planejando teses, fatos e provas…", 18)
     plano = _outline_juridico(contexto, caso_id)
-    avancar_etapa("Cruzando o plano com os documentos do caso…", 20)
     outline = _outline_para_redigir(plano)
     # PETITION_PLAN: partes verificadas, fatos com id, teses isoladas, pedidos únicos (fonte única).
     texto_do_caso = contexto
@@ -2892,13 +2706,6 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "_funcoes_de_conteudo": {},
     }
     plano_est, texto_plano = _tentar_etapa("plano estruturado", _montar_plano, (plano_vazio, ""), diag)
-    # A data é uma entrada de geração, não uma decisão do redator. Ela acompanha
-    # o plano até o higienizador final para nenhuma etapa trocar o fechamento por
-    # `date.today()` de outro processo/dia.
-    plano_est["petition_date"] = data_da_peticao.isoformat()
-    # Rascunhos preservam o trabalho mesmo se a validação strict encontrar
-    # pendências. Eles continuam IN_REVIEW e nunca se tornam protocoláveis.
-    plano_est_legado = copy.deepcopy(plano_est)
     if texto_plano:
         outline += "\n\n" + texto_plano
     # CAMADA JURÍDICA (PETICAO_PIPELINE_JURIDICO_MODE): issue spotting sobre o catálogo inteiro da skill.
@@ -2909,32 +2716,9 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     #            pronto a tempo e, no fim, põe lacunas/defesas/críticos nas pendências do advogado.
     modo_juridico = juridico.modo()
     estrito, sombra = modo_juridico == juridico.STRICT, modo_juridico == juridico.SHADOW
-    if estrito:
-        # O outline legado permanece como matéria-prima de fatos, não de pedidos.
-        plano_est["_somente_motor_juridico"] = True
     assistido = juridico.assistido()
     falhas_juridicas: list[str] = []
-    gerar_rascunho_com_pendencias = _ligado("PETICAO_GERAR_RASCUNHO_SEMPRE", "1")
-    rascunho_com_pendencias = False
     prep_juridico: dict[str, Any] | None = None
-    case_state_final: dict[str, Any] | None = None
-    snapshots: list[dict[str, Any]] = []
-
-    def _verificar_estado_final(etapa: str) -> None:
-        """Registra mutação para revisão sem descartar a minuta já redigida."""
-        nonlocal rascunho_com_pendencias
-        if plano_finalizado is None:
-            return
-        try:
-            juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa=etapa)
-            juridico_case_state.verificar(
-                case_state_final or {}, juridico_case_state.do_prep(prep_juridico or {}), etapa=etapa)
-        except Exception as exc:
-            if not gerar_rascunho_com_pendencias:
-                raise
-            falhas_juridicas.append(f"[GERAÇÃO_EM_REVISÃO] {exc}")
-            rascunho_com_pendencias = True
-
     analise_em_sombra = None
     if estrito:
         avancar_etapa("Identificando todas as teses possíveis do caso…", 22)
@@ -2950,16 +2734,11 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         plano_para_consultas, contexto, nome_categoria, consulta_fixa_legada=not estrito)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
-    # Pesquisa externa é lenta. Dispara antes das recuperações locais e da
-    # redação para que ela use todo esse tempo em paralelo. Achados novos nunca
-    # entram como citação automática: continuam sujeitos ao Citation Gate.
-    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(
-        plano_est, plano_para_consultas, data_da_peticao
-    )
     avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 30)
     uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
     precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
+    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(plano_est, plano, data_da_peticao)
     _TEXTO_DO_CASO.set(contexto[:20_000])
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria, consultas=consultas
@@ -2971,56 +2750,13 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
                 llm_proposicoes=_llm_raciocinio(120.0) if _ligado("PETICAO_MOTOR_PROPOSICOES_LLM") else None),
             falhas_juridicas, diag)
     if estrito and (prep_juridico is None or falhas_juridicas):
-        motivo = "Modo strict: a camada jurídica não concluiu — " + "; ".join(
-            falhas_juridicas or ["análise não produzida"])
-        if not gerar_rascunho_com_pendencias:
-            raise ErroPeticao(motivo)
-        # Não há fallback silencioso: o resultado é sempre uma minuta em
-        # revisão, nunca uma peça liberada para protocolo.
-        falhas_juridicas.append("[GERAÇÃO_EM_REVISÃO] " + motivo)
-        rascunho_com_pendencias = True
-        estrito = False
-        prep_juridico = None
-        plano_est = copy.deepcopy(plano_est_legado)
-        plano_est.pop("_somente_motor_juridico", None)
+        # strict não tem redação degradada: sem a camada jurídica completa, não há peça.
+        raise ErroPeticao(
+            "Modo strict: a camada jurídica não concluiu — " + "; ".join(falhas_juridicas or ["análise não produzida"])
+            + ". Nenhuma peça foi gerada; corrija a causa (ex.: base do Acervo Jurídico) ou use o modo shadow.")
     if estrito and prep_juridico:
         plano_est = prep_juridico["plano_est"]
         outline = _outline_para_redigir(plano) + "\n\n" + plano_da_peticao.para_prompt(plano_est)
-        erros_do_plano = juridico_imutabilidade.validar(plano_est)
-        if erros_do_plano:
-            motivo = "PETITION_PLAN inválido: " + "; ".join(erros_do_plano)
-            if not gerar_rascunho_com_pendencias:
-                raise ErroPeticao(motivo)
-            falhas_juridicas.append("[GERAÇÃO_EM_REVISÃO] " + motivo)
-            rascunho_com_pendencias = True
-            estrito = False
-            prep_juridico = None
-            plano_est = copy.deepcopy(plano_est_legado)
-            plano_est.pop("_somente_motor_juridico", None)
-        if estrito:
-            case_state_final = juridico_case_state.do_prep(prep_juridico)
-            erros_case_state = juridico_case_state.validar(case_state_final)
-            if erros_case_state:
-                motivo = "CaseState inválido: " + "; ".join(erros_case_state)
-                if not gerar_rascunho_com_pendencias:
-                    raise ErroPeticao(motivo)
-                falhas_juridicas.append("[GERAÇÃO_EM_REVISÃO] " + motivo)
-                rascunho_com_pendencias = True
-                estrito = False
-                prep_juridico = None
-                plano_est = copy.deepcopy(plano_est_legado)
-                plano_est.pop("_somente_motor_juridico", None)
-        if estrito:
-            for estagio, campo in (("SNAPSHOT_FACTS", "facts"), ("SNAPSHOT_ISSUES", "issues"),
-                                    ("SNAPSHOT_AUTHORITIES", "authorities"), ("SNAPSHOT_CALCULATIONS", "calculations"),
-                                    ("SNAPSHOT_REQUESTS", "requests")):
-                snapshots.append(juridico_case_state.snapshot(generation_id, estagio, case_state_final[campo]))
-            snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_PLAN_FINALIZED", case_state_final))
-            plano_finalizado = juridico_imutabilidade.congelar(plano_est)
-        else:
-            plano_finalizado = None
-    else:
-        plano_finalizado = None
     tamanho_caso = len(contexto)
     contexto += precedentes + legislacao + bloco_atualizacao + padroes + outline
     # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
@@ -3082,10 +2818,6 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "modelo": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
         "fallback_acionado": bool(diag["fallbacks"]),
         "fallbacks": diag["fallbacks"],
-        "petition_plan_finalized": {
-            "ativo": bool(plano_finalizado),
-            "hash": juridico_imutabilidade.impressao(plano_est) if plano_finalizado else None,
-        },
     }
     if not precedentes and not legislacao:
         contexto += (
@@ -3188,22 +2920,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
         )
         + "\nUse somente esses papéis, nessa ordem, cada um UMA vez e com conteúdo próprio. PRELIMINARY é obrigatória e deve trazer a gratuidade quando houver declaração/elemento de hipossuficiência. Preserve a marcação visual exigida pela skill (# para capítulo, > para citação curta verificável, ::: para blocos centralizados). Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
     )
-    instrucao_base += (
-        "\n\n=== FONTE CANONICA OBRIGATORIA ===\n"
-        "O PETITION_PLAN fornecido na entrada e a unica fonte para datas, valores, "
-        "percentuais e fatos no corpo. Nao complete cronologia por inferencia. "
-        "Em FACTS, so escreva uma data se ela estiver identificada no plano com fonte; "
-        "caso contrario, omita o marco e registre a lacuna apenas em pendencias. "
-        "Nao escreva valores monetarios em CLAIMS ou VALUE: o renderer os substitui "
-        "pelos objetos de calculo e pelo valor da causa canonicos."
-        "\n\n=== PADRAO DE RACIOCINIO FORENSE ===\n"
-        "Para cada tese aproveitada, conecte fato documental especifico -> regra ou precedente verificado -> "
-        "consequencia juridica -> pedido correspondente. Antecipe a defesa previsivel apenas quando os autos "
-        "derem base e responda com prova ou regra aplicavel; nao crie uma controversia artificial. Diferencie "
-        "o que esta provado, o que e alegacao e o que depende de pericia. Prefira uma fundamentacao precisa "
-        "e aderente aos fatos a uma lista de artigos ou julgados. Toda citacao deve explicar, em linguagem "
-        "propria, por que a sua razao de decidir alcanca este caso."
-    )
     if estrito and prep_juridico:
         instrucao_base += _CONTRATO_JURIDICO
     instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
@@ -3219,7 +2935,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
     avancar_etapa("Redigindo a petição — esta é a etapa mais demorada…", 35)
-    entrada_redacao = plano_da_peticao.para_prompt(plano_est) + "\n\n" + contexto
+    entrada_redacao = contexto
     if estrito and prep_juridico:
         # Plano, base jurídica e regras PRIMEIRO; o corte de tamanho cai no fim do material do caso, nunca no plano.
         extras = contexto[tamanho_caso + len(precedentes) + len(legislacao) + len(padroes) + len(outline):]
@@ -3285,15 +3001,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
         ][:3],
     }
     secoes = _normalizar_secoes(saida.get("secoes") or [], plano_est["contrato_secoes"])
-    if estrito:
-        vazamento = juridico_case_state.trace_em_prosa(secoes)
-        if vazamento:
-            motivo = "Trace interno chegou à prosa: " + "; ".join(vazamento)
-            if not gerar_rascunho_com_pendencias:
-                raise ErroPeticao(motivo)
-            falhas_juridicas.append("[GERAÇÃO_EM_REVISÃO] " + motivo)
-            rascunho_com_pendencias = True
-        snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_PROSE", secoes))
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
@@ -3301,21 +3008,16 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # cliente, súmula de memória). Ver `conferencia_peticao`.
     avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 74)
     orientacoes_motor, motor_no_aprofundamento = _orientacoes_do_motor(analise_em_sombra) if assistido else ({}, None)
-    if estrito:
-        # O redator já recebeu o plano e a base jurídica. Reescrever capítulos
-        # depois disso seria uma segunda decisão jurídica sem novo plano.
-        aprofundamento = {"aplicado": False, "motivo": "desligado no modo strict", "por_topico": [], "textos_acervo": []}
-    else:
-        secoes, aprofundamento = _tentar_etapa(
-            "aprofundamento",
-            lambda: _aprofundar_pela_referencia(
-                caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
-                assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
-                plano_est=plano_est, orientacoes_motor=orientacoes_motor,
-            ),
-            (secoes, {"por_topico": [], "textos_acervo": []}),
-            diag,
-        )
+    secoes, aprofundamento = _tentar_etapa(
+        "aprofundamento",
+        lambda: _aprofundar_pela_referencia(
+            caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
+            assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+            plano_est=plano_est, orientacoes_motor=orientacoes_motor,
+        ),
+        (secoes, {"por_topico": [], "textos_acervo": []}),
+        diag,
+    )
     if motor_no_aprofundamento is not None:
         aprofundamento["motor_juridico"] = motor_no_aprofundamento
     textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []) or [])]
@@ -3331,8 +3033,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
             diag,
         )
     aprofundamento["pedidos_do_plano"] = rel_pedidos
-    if plano_finalizado is not None:
-        _verificar_estado_final("renderização dos pedidos")
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
     avancar_etapa("Conferindo a peça contra os autos…", 85)
@@ -3341,7 +3041,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     secoes, violacoes, conferencia = _tentar_etapa(
         "conferência contra os autos",
         lambda: _conferir_contra_os_autos(
-            caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo, corrigir=not estrito
+            caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo
         ),
         (secoes, [], {"erro": "etapa falhou"}),
         diag,
@@ -3350,10 +3050,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # bruto — isso a conferência acima já fez): omissão de fato relevante, seção
     # rasa, regra da skill não seguida. Pode reescrever seções; por isso vem
     # antes da cobertura, que precisa medir o texto FINAL.
-    if estrito:
-        achados_validacao = []
-    else:
-        secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
+    secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
     # PETITION LINTER: qualificação, pedidos únicos, isolamento entre teses e nada do acervo como fato,
     # com correção automática controlada e nova validação — ANTES de a peça ir para o DOCX.
     avancar_etapa("Validando a peça (linter)…", 91)
@@ -3365,7 +3062,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
             # com a camada jurídica ativa a skill deixa de ser fonte citável: norma vem da base verificada
             texto_do_caso=material_sem_acervo + ("" if estrito else peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get())),
             textos_do_acervo=textos_acervo, material=material_sem_acervo,
-            permitir_mutacoes=not estrito,
         ),
         (secoes, [], {"erro": "etapa falhou"}),
         diag,
@@ -3376,8 +3072,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
     pipeline["auditor_final"] = rel_linter
     pipeline["plano_estruturado"] = plano_est
     pipeline["case_facts"] = plano_est.get("case_facts")
-    if plano_finalizado is not None:
-        _verificar_estado_final("auditorias pré-documento")
     # Cobertura: quais fatos e eventos que a análise dos documentos já validou
     # (o mesmo material que virou `case_brief`, acima) efetivamente aparecem no
     # texto final. Não bloqueia nem corrige nada — só torna visível quando a
@@ -3390,24 +3084,13 @@ Cada content deve conter parágrafos separados por linha em branco."""
         if prep_juridico:
             # As revisões por LLM acima podem ter tocado pedidos, valor ou data: o código os renderiza de novo.
             secoes, pipeline["renderizacao_final"] = _renderizar_juridico(secoes, prep_juridico, falhas_juridicas, diag)
-            snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_RENDER_INPUT", secoes))
     secoes, rel_final, achados_finais = _tentar_etapa(
         "validação final",
-        lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso, permitir_mutacoes=not estrito),
+        lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso),
         (secoes, {"pendencias_humanas": [], "rodadas": []}, []),
         diag,
     )
     violacoes = _mesclar_achados_finais(violacoes, achados_finais, secoes)
-    if plano_finalizado is not None:
-        _verificar_estado_final("validação final")
-        vazamento_final = juridico_case_state.trace_em_prosa(secoes)
-        if vazamento_final:
-            motivo = "Trace interno chegou ao documento final: " + "; ".join(vazamento_final)
-            if not gerar_rascunho_com_pendencias:
-                raise ErroPeticao(motivo)
-            falhas_juridicas.append("[GERAÇÃO_EM_REVISÃO] " + motivo)
-            rascunho_com_pendencias = True
-        snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_FINAL", secoes))
     pipeline["documento_final"] = rel_final
     hash_validado = documento_final.impressao_hash(secoes)
     cobertura = _tentar_etapa(
@@ -3446,12 +3129,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
                 falhas_juridicas, diag)
         pipeline["juridico"] = pipeline.get("juridico") or juridico_orq.trace_de_falha(juridico.STRICT, falhas_juridicas)
         if falhas_juridicas or auditoria_juridica is None:
-            motivo = "Modo strict: a verificação jurídica da peça não concluiu — " + "; ".join(
-                falhas_juridicas or ["auditoria não executou"])
-            if not gerar_rascunho_com_pendencias:
-                raise ErroPeticao(motivo)
-            falhas_juridicas.append("[GERAÇÃO_EM_REVISÃO] " + motivo)
-            rascunho_com_pendencias = True
+            raise ErroPeticao(
+                "Modo strict: a verificação jurídica da peça não concluiu — " + "; ".join(falhas_juridicas or ["auditoria não executou"])
+                + ". A peça não foi entregue.")
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
     peticao_aprendizado.registrar_avaliacao(
         generation_id=generation_id, caso_id=caso_id, tipo="post_generation", achados=achados_criticos
@@ -3499,20 +3179,10 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
-            # Uma minuta com qualquer violação factual, cálculo sem origem ou
-            # total divergente jamais é elegível a protocolo, inclusive no fluxo
-            # legado. Antes, essas falhas ficavam só em `review.findings` e a
-            # prontidão podia permanecer verdadeira.
-            "ready": estrito and not rascunho_com_pendencias and not (
-                any(v.bloqueia for v in violacoes)
-                or auditoria_estrutural.pendencias(secoes)
-                or pipeline.get("documento_final", {}).get("pendencias_humanas")
-            ),
+            "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("documento_final", {}).get("pendencias_humanas")),
             "blocking_issues": [
-                *(f"[{v.codigo}] {v.motivo}"[:200] for v in violacoes if v.bloqueia),
                 *(f"[PENDENTE] no texto ({c}): {m}"[:200] for c, m in auditoria_estrutural.pendencias(secoes)),
                 *((pipeline.get("documento_final") or {}).get("pendencias_humanas") or []),
-                *list(dict.fromkeys(falhas_juridicas)),
             ],
             "warnings": [
                 *_avisos_de_pipeline(pipeline),
@@ -3524,8 +3194,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
             ],
             "pendencias": pendencias or analise.get("fatos_so_na_entrevista") or [],
             "completo": not pendencias and not analise.get("lacunas"),
-            "mode": f"{modo_juridico}_draft" if rascunho_com_pendencias else modo_juridico,
-            "protocolable": False,
         },
         "review": {"summary": analise.get("observacoes", "")},
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
@@ -3547,8 +3215,6 @@ Cada content deve conter parágrafos separados por linha em branco."""
             "outline": plano,
             "referencias_do_acervo": referencias_acervo,
             "pipeline": pipeline,
-            "case_state": case_state_final,
-            "snapshots": snapshots,
             "case_brief": brief,
             "cobertura": cobertura,
             "validacao_skill_brief": achados_validacao,
@@ -3565,16 +3231,9 @@ Cada content deve conter parágrafos separados por linha em branco."""
         _aplicar_veredito_juridico(dados, auditoria_juridica, falhas_juridicas)
     elif sombra:
         dados["trace"]["skills"].append("legal_pipeline_shadow")
-    dados["readiness"]["protocolable"] = bool(dados["readiness"].get("ready")) and estrito and not rascunho_com_pendencias
     # Nada pode ter mudado o conteúdo depois do validador final (o que foi validado é o que será impresso).
     if documento_final.impressao_hash(dados["sections"]) != hash_validado:
-        motivo = "O documento mudou depois da validação final"
-        if not gerar_rascunho_com_pendencias:
-            raise ErroPeticao(motivo)
-        dados["readiness"]["ready"] = False
-        dados["readiness"]["protocolable"] = False
-        dados["readiness"]["mode"] = f"{modo_juridico}_draft"
-        dados["readiness"]["blocking_issues"].append("[GERAÇÃO_EM_REVISÃO] " + motivo)
+        raise ErroPeticao("O documento mudou depois da validação final — geração interrompida para não entregar peça não validada.")
     _salvar(caso_id, dados)
     return dados
 
@@ -3608,10 +3267,7 @@ def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, te
     fontes.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
     modelo = juridico.modelo_raciocinio() or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     return juridico_orq.analisar(
-        # A matriz de fontes vai separada e completa; limitar o resumo evita que
-        # uma única chamada de issue-spotting com >120 mil caracteres expire antes
-        # de qualquer auditoria rodar.
-        plano_est=plano_est, contexto_caso=contexto[:80_000], fontes=fontes, llm=_llm_raciocinio(300.0),
+        plano_est=plano_est, contexto_caso=contexto, fontes=fontes, llm=_llm_raciocinio(300.0),
         textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=modelo, data_referencia=data_da_peticao,
         llm_contrateses=_llm_raciocinio(180.0) if _ligado("PETICAO_MOTOR_CONTRATESES_LLM") else None, modelo_contrateses=modelo,
     )
@@ -3674,8 +3330,6 @@ def _etapa_juridica(nome: str, funcao: Any, falhas: list[str], diag: dict[str, A
 _EXECUTOR_SOMBRA = ThreadPoolExecutor(max_workers=2, thread_name_prefix="juridico-sombra")
 #: Quanto a peça legada, já pronta, pode esperar o modo shadow terminar.
 ESPERA_MAXIMA_SOMBRA_S = float(os.getenv("PETICAO_JURIDICO_SOMBRA_ESPERA_S", "45"))
-#: No assistido o motor só acrescenta pendências: a peça pronta não fica parada esperando por ele.
-ESPERA_ASSISTIDO_S = float(os.getenv("PETICAO_ASSISTIDO_ESPERA_S", "10"))
 
 
 def _em_sombra(funcao: Any) -> Any:
@@ -3706,9 +3360,8 @@ def _juridico_em_sombra(
     if futuro is None:
         falhas.append("análise: não iniciou")
     else:
-        espera = ESPERA_ASSISTIDO_S if modo == juridico.ASSISTIDO else ESPERA_MAXIMA_SOMBRA_S
         try:
-            prep = futuro.result(timeout=max(1.0, min(espera, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
+            prep = futuro.result(timeout=max(1.0, min(ESPERA_MAXIMA_SOMBRA_S, ORCAMENTO_SUAVE_S - _tempo_decorrido() - 30)))
         except TimeoutError:
             falhas.append("análise: não terminou a tempo; a peça legada não esperou")
         except Exception as erro:  # noqa: BLE001
@@ -4916,13 +4569,6 @@ def salvar_secoes(
         armazenamento.registrar_versao_peticao(caso_id, anterior)
     if alterou:
         _reconferir(caso_id, dados)
-        prontidao = dados.setdefault("readiness", {})
-        prontidao["ready"] = False
-        prontidao["protocolable"] = False
-        prontidao["status"] = "IN_REVIEW"
-        prontidao.setdefault("blocking_issues", []).append(
-            "Edição manual posterior à auditoria: revalidação integral obrigatória."
-        )
     return _salvar(caso_id, dados)
 
 
@@ -5057,14 +4703,6 @@ def progresso(caso_id: str, desde: str) -> dict[str, Any]:
                 "etapa": "Petição pronta.",
                 "passo": total,
                 "passos_totais": total,
-            }
-        perdida = _solicitacao_perdida(solicitacao) if solicitacao.get("status") != "failed" else ""
-        if perdida:
-            log.warning("petição local: solicitação %s encerrada como perdida em '%s' (%s%%)", solicitacao.get("id"), etapa, passo)
-            armazenamento.concluir_solicitacao_peticao(str(solicitacao["id"]), perdida)
-            return {
-                "status": "FAILED", "completed_steps": passo, "generation_id": None, "blocking_findings": 0,
-                "erro": perdida, "etapa": etapa, "passo": passo, "passos_totais": total,
             }
         return {
             "status": "RUNNING",
