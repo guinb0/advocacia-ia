@@ -357,16 +357,18 @@ def test_decisao_de_tabelas():
     assert tabelas.decidir(m, [], {"contrato": True})["contrato"]["decisao"] == "USE_TABLE"
 
 
-def test_camada_desligada_por_padrao_e_sem_consulta_fixa(monkeypatch):
+def test_camada_estrita_por_padrao_e_legado_so_por_opt_in(monkeypatch):
     monkeypatch.delenv("PETICAO_PIPELINE_JURIDICO", raising=False)
     monkeypatch.delenv("PETICAO_PIPELINE_JURIDICO_MODE", raising=False)
-    assert juridico.ativo() is False and juridico.modo() == juridico.DESLIGADO
+    assert juridico.ativo() is True and juridico.modo() == juridico.STRICT
     monkeypatch.setenv("PETICAO_PIPELINE_JURIDICO", "1")
     assert juridico.ativo() is True and juridico.estrito()
     monkeypatch.setenv("PETICAO_PIPELINE_JURIDICO_MODE", "shadow")
     assert juridico.sombra() and not juridico.estrito()
     monkeypatch.setenv("PETICAO_PIPELINE_JURIDICO_MODE", "qualquer-coisa")
     monkeypatch.delenv("PETICAO_PIPELINE_JURIDICO")
+    assert juridico.modo() == juridico.STRICT
+    monkeypatch.setenv("PETICAO_PIPELINE_JURIDICO_MODE", "off")
     assert juridico.modo() == juridico.DESLIGADO
     plano_ = {"teses": [{"tese": "responsabilidade objetiva"}]}
     legado = recuperacao_por_tese.consultas_do_plano(plano_, "assalto na agência", "acidente")

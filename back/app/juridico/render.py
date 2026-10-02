@@ -54,7 +54,7 @@ def secao_pedidos(plano: dict[str, Any], *, introducao: str = "Diante do exposto
             # Pedido financeiro sem cálculo não pode virar valor arbitrário no
             # documento final. A pendência já fica registrada no plano/auditoria.
             if not p.get("calculation_id"):
-                continue
+                raise ValueError(f"Pedido monetário {p.get('request_id') or p.get('id')} sem calculation_id")
             linha += f", no valor de {calc.brl(calc.valor_numerico(valor) or 0)}"
             linha += f" (memória de cálculo {p['calculation_id']})"
         if p.get("reflexes"):

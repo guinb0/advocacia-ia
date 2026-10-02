@@ -372,6 +372,8 @@ def test_assistido_so_com_modo_off_e_desligavel(monkeypatch):
     monkeypatch.delenv("PETICAO_PIPELINE_JURIDICO_MODE", raising=False)
     monkeypatch.delenv("PETICAO_PIPELINE_JURIDICO", raising=False)
     monkeypatch.delenv("PETICAO_MOTOR_JURIDICO", raising=False)
+    assert not juridico.assistido(), "strict é o padrão seguro"
+    monkeypatch.setenv("PETICAO_PIPELINE_JURIDICO_MODE", "off")
     assert juridico.assistido()
     monkeypatch.setenv("PETICAO_MOTOR_JURIDICO", "0")
     assert not juridico.assistido()

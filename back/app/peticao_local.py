@@ -63,6 +63,7 @@ from .juridico import raciocinio as juridico_raciocinio
 from .juridico import render as juridico_render
 from .juridico import repositorio as juridico_repo
 from .juridico import teses as juridico_teses
+from .juridico import imutabilidade as juridico_imutabilidade
 
 log = logging.getLogger("peticao_local")
 
@@ -415,7 +416,7 @@ def _ocr_do_caso(caso_id: str) -> str:
 
 def _lintar_e_corrigir(
     caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], *, texto_do_caso: str, textos_do_acervo: list[str],
-    material: str = "", texto_dos_autos: str = "",
+    material: str = "", texto_dos_autos: str = "", permitir_mutacoes: bool = True,
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
     """AUDITOR FINAL: verificações determinísticas + auditoria semântica independente, com correção e limite de iterações."""
     params = peticao_skill_arquivos.validacoes_da_skill()["parametros"]
@@ -439,6 +440,22 @@ def _lintar_e_corrigir(
             return {}  # sem tempo: o auditor por modelo cede lugar às verificações determinísticas
         return _llm_json(instrucao, entrada, timeout=240.0)
 
+    # No fluxo estrito, auditor é detector. Ele não reescreve prose nem troca o
+    # ledger: uma mudança jurídica exige voltar ao planejador e criar um novo
+    # PETITION_PLAN, com novo hash e rastreabilidade.
+    if not permitir_mutacoes:
+        achados = verificacoes(secoes, plano_est)
+        semanticos = auditor_final.auditar_com_modelo(chamar, cf, plano_est, secoes,
+                                                       [a for a in achados if a.codigo == "SOBREPOSICAO_SEMANTICA_CANDIDATA"])
+        achados += semanticos
+        criticos = [a for a in achados if a.bloqueia]
+        return secoes, achados, {
+            "iteracoes": [{"n": 1, "modo": "read_only", "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]}],
+            "pendencias_humanas": [f"{a.codigo}:{a.secao} — {a.motivo}"[:260] for a in criticos],
+            "liberada": not criticos,
+            "mutacoes_desligadas": True,
+        }
+
     return auditor_final.executar(
         secoes, plano_est, cf, params=params, verificacoes=verificacoes, max_iteracoes=2,
         chamar=chamar,
@@ -449,6 +466,7 @@ def _lintar_e_corrigir(
 
 def _validar_documento_final(
     caso_id: str, secoes: list[dict[str, Any]], plano_est: dict[str, Any], texto_do_caso: str, *, max_rodadas: int = 1,
+    permitir_mutacoes: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[Any]]:
     """higieniza (determinístico) → valida o artefato final → corrige o que for corrigível → higieniza e valida de NOVO.
 
@@ -472,7 +490,7 @@ def _validar_documento_final(
                                "criticos": [f"{a.codigo}:{a.secao}" for a in criticos]})
         if higiene.get("metadata_interna_removida"):
             rel.setdefault("metadata_interna", []).extend(higiene["metadata_interna_removida"])
-        if not criticos or rodada == max_rodadas or _sem_tempo(folga_s=120):
+        if not permitir_mutacoes or not criticos or rodada == max_rodadas or _sem_tempo(folga_s=120):
             break
         por_secao: dict[str, list[Any]] = {}
         for a in criticos:
@@ -2932,6 +2950,12 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     if estrito and prep_juridico:
         plano_est = prep_juridico["plano_est"]
         outline = _outline_para_redigir(plano) + "\n\n" + plano_da_peticao.para_prompt(plano_est)
+        erros_do_plano = juridico_imutabilidade.validar(plano_est)
+        if erros_do_plano:
+            raise ErroPeticao("PETITION_PLAN inválido: " + "; ".join(erros_do_plano))
+        plano_finalizado = juridico_imutabilidade.congelar(plano_est)
+    else:
+        plano_finalizado = None
     tamanho_caso = len(contexto)
     contexto += precedentes + legislacao + bloco_atualizacao + padroes + outline
     # O QUE FALTOU, DITO AO MODELO E GRAVADO NA PEÇA.
@@ -2993,6 +3017,10 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "modelo": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
         "fallback_acionado": bool(diag["fallbacks"]),
         "fallbacks": diag["fallbacks"],
+        "petition_plan_finalized": {
+            "ativo": bool(plano_finalizado),
+            "hash": juridico_imutabilidade.impressao(plano_est) if plano_finalizado else None,
+        },
     }
     if not precedentes and not legislacao:
         contexto += (
@@ -3199,16 +3227,21 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # cliente, súmula de memória). Ver `conferencia_peticao`.
     avancar_etapa("Aprofundando a peça pelo padrão do acervo…", 74)
     orientacoes_motor, motor_no_aprofundamento = _orientacoes_do_motor(analise_em_sombra) if assistido else ({}, None)
-    secoes, aprofundamento = _tentar_etapa(
-        "aprofundamento",
-        lambda: _aprofundar_pela_referencia(
-            caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
-            assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
-            plano_est=plano_est, orientacoes_motor=orientacoes_motor,
-        ),
-        (secoes, {"por_topico": [], "textos_acervo": []}),
-        diag,
-    )
+    if estrito:
+        # O redator já recebeu o plano e a base jurídica. Reescrever capítulos
+        # depois disso seria uma segunda decisão jurídica sem novo plano.
+        aprofundamento = {"aplicado": False, "motivo": "desligado no modo strict", "por_topico": [], "textos_acervo": []}
+    else:
+        secoes, aprofundamento = _tentar_etapa(
+            "aprofundamento",
+            lambda: _aprofundar_pela_referencia(
+                caso_id, secoes, brief, referencias_acervo, contexto=contexto, plano=plano, categoria=nome_categoria,
+                assuntos=peticao_skill_arquivos.assuntos_relacionados(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get()),
+                plano_est=plano_est, orientacoes_motor=orientacoes_motor,
+            ),
+            (secoes, {"por_topico": [], "textos_acervo": []}),
+            diag,
+        )
     if motor_no_aprofundamento is not None:
         aprofundamento["motor_juridico"] = motor_no_aprofundamento
     textos_acervo = [padroes, *(aprofundamento.pop("textos_acervo", []) or [])]
@@ -3224,6 +3257,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
             diag,
         )
     aprofundamento["pedidos_do_plano"] = rel_pedidos
+    if plano_finalizado is not None:
+        juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa="renderização dos pedidos")
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
     avancar_etapa("Conferindo a peça contra os autos…", 85)
@@ -3232,7 +3267,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     secoes, violacoes, conferencia = _tentar_etapa(
         "conferência contra os autos",
         lambda: _conferir_contra_os_autos(
-            caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo
+            caso_id, secoes, texto_entrevista=texto_entrevista, material=material_sem_acervo, corrigir=not estrito
         ),
         (secoes, [], {"erro": "etapa falhou"}),
         diag,
@@ -3241,7 +3276,10 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # bruto — isso a conferência acima já fez): omissão de fato relevante, seção
     # rasa, regra da skill não seguida. Pode reescrever seções; por isso vem
     # antes da cobertura, que precisa medir o texto FINAL.
-    secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
+    if estrito:
+        achados_validacao = []
+    else:
+        secoes, achados_validacao = _validar_contra_skill_e_brief(caso_id, secoes, brief)
     # PETITION LINTER: qualificação, pedidos únicos, isolamento entre teses e nada do acervo como fato,
     # com correção automática controlada e nova validação — ANTES de a peça ir para o DOCX.
     avancar_etapa("Validando a peça (linter)…", 91)
@@ -3253,6 +3291,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             # com a camada jurídica ativa a skill deixa de ser fonte citável: norma vem da base verificada
             texto_do_caso=material_sem_acervo + ("" if estrito else peticao_skill_arquivos.carregar(nome_categoria, codigo_categoria, _TEXTO_DO_CASO.get())),
             textos_do_acervo=textos_acervo, material=material_sem_acervo,
+            permitir_mutacoes=not estrito,
         ),
         (secoes, [], {"erro": "etapa falhou"}),
         diag,
@@ -3263,6 +3302,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
     pipeline["auditor_final"] = rel_linter
     pipeline["plano_estruturado"] = plano_est
     pipeline["case_facts"] = plano_est.get("case_facts")
+    if plano_finalizado is not None:
+        juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa="auditorias pré-documento")
     # Cobertura: quais fatos e eventos que a análise dos documentos já validou
     # (o mesmo material que virou `case_brief`, acima) efetivamente aparecem no
     # texto final. Não bloqueia nem corrige nada — só torna visível quando a
@@ -3277,11 +3318,13 @@ Cada content deve conter parágrafos separados por linha em branco."""
             secoes, pipeline["renderizacao_final"] = _renderizar_juridico(secoes, prep_juridico, falhas_juridicas, diag)
     secoes, rel_final, achados_finais = _tentar_etapa(
         "validação final",
-        lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso),
+        lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso, permitir_mutacoes=not estrito),
         (secoes, {"pendencias_humanas": [], "rodadas": []}, []),
         diag,
     )
     violacoes = _mesclar_achados_finais(violacoes, achados_finais, secoes)
+    if plano_finalizado is not None:
+        juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa="validação final")
     pipeline["documento_final"] = rel_final
     hash_validado = documento_final.impressao_hash(secoes)
     cobertura = _tentar_etapa(
