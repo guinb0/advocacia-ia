@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,6 +27,19 @@ __all__ = [
 ]
 
 ID_LOCAL = peticao_local.ID_LOCAL
+
+
+def _geracao_v2_disponivel() -> bool:
+    """Interruptor explícito: V1 não pode voltar a gerar por acidente.
+
+    A liberação futura exige que a V2 esteja habilitada *e* que o escritório
+    tenha liberado a geração. Até lá, a UI recebe uma explicação clara em vez
+    de executar qualquer caminho legado.
+    """
+    return (
+        os.getenv("PETITION_PIPELINE_V2", "0").strip().lower() in {"1", "true", "sim", "on"}
+        and os.getenv("PETITION_GENERATION_ENABLED", "0").strip().lower() in {"1", "true", "sim", "on"}
+    )
 
 
 def transcricao(caso_id: str) -> dict[str, Any]:
@@ -111,6 +125,11 @@ def gerar_peticao(caso_id: str, *, opcao: int = 0) -> dict[str, Any]:
 
 def gerar_completo(caso_id: str) -> dict[str, Any]:
     """Analisa entrevista + OCR e redige a petição (síncrono)."""
+    if not _geracao_v2_disponivel():
+        raise ErroDoAgente(
+            "A geração de petições está temporariamente desativada durante a migração para a "
+            "nova pipeline. Nenhuma minuta legada será gerada até a liberação da V2."
+        )
     peticao_local.avancar_etapa("Lendo a transcrição da entrevista…", 1)
     ent = transcricao(caso_id)
     try:
