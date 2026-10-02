@@ -1,6 +1,11 @@
 from app.juridico import luna_pipeline
 
 
+def test_feature_flag_liga_o_pipeline(monkeypatch):
+    monkeypatch.setenv("LUNA_PIPELINE_V2", "1")
+    assert luna_pipeline.ativo()
+
+
 def _llm(_i, _e):
     return {"teses": [{"catalogo_id": "K1", "tese": "Dano moral", "decisao": "SUPPORTED", "fatos_que_suportam": ["M01"]}]}
 
