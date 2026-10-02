@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -155,22 +156,102 @@ def batida(entrevista_id: str, usuario: auth.Usuario = Depends(auth.usuario_atua
 def solicitar(entrevista_id: str, dados: Solicitacao, usuario: auth.Usuario = Depends(auth.usuario_atual)):
     instante = agora()
     with conectar() as con:
+        # Só pede presença de quem ainda está em entrevista: um pedido repetido não
+        # pode devolver a "solicitado" uma chamada que alguém já assumiu ou encerrou.
         resultado = con.execute(f"""UPDATE {TABELA} SET caso_id=?,sala=?,cliente=?,status='solicitado',
-            solicitado_em=?,atualizado_em=? WHERE entrevista_id=?""",
+            solicitado_em=?,atualizado_em=? WHERE entrevista_id=? AND status IN ('entrevista','solicitado')""",
             (dados.caso_id, dados.sala, dados.cliente, instante, instante, entrevista_id))
+        if resultado.rowcount == 0:
+            existe = con.execute(f"SELECT status FROM {TABELA} WHERE entrevista_id=?", (entrevista_id,)).fetchone()
     if resultado.rowcount == 0:
-        raise HTTPException(404, "Atendimento não encontrado.")
+        if existe is None:
+            raise HTTPException(404, "Atendimento não encontrado.")
+        return {"ok": False, "status": existe["status"]}
     return {"ok": True}
+
+
+def encerrar(entrevista_id: str) -> bool:
+    """Fecha o atendimento na fila. É o que impede um pedido antigo de tocar de novo."""
+    with conectar() as con:
+        resultado = con.execute(
+            f"""UPDATE {TABELA} SET status='encerrado', atualizado_em=?
+                 WHERE entrevista_id=? AND status IN ('entrevista','solicitado','assumido')""",
+            (agora(), entrevista_id),
+        )
+    return resultado.rowcount > 0
+
+
+@roteador.post("/atendimentos/{entrevista_id}/encerrar")
+def encerrar_rota(entrevista_id: str, usuario: auth.Usuario = Depends(auth.usuario_atual)):
+    return {"ok": encerrar(entrevista_id)}
+
+
+def enfileirar_para_documentacao(
+    *, entrevista_id: str, caso_id: str | None, cliente: str,
+    entrevistador_id: str, entrevistador_nome: str,
+) -> None:
+    """O caso criado entra na fila como "aguardando documentação" — sem chamada viva."""
+    instante = agora()
+    with conectar() as con:
+        alteradas = con.execute(
+            f"""UPDATE {TABELA} SET caso_id=?, cliente=?, status='aguardando_documentacao',
+                   solicitado_em=?, atualizado_em=?
+                 WHERE entrevista_id=? AND status NOT IN ('assumido','aguardando_documentacao')""",
+            (caso_id, cliente, instante, instante, entrevista_id),
+        ).rowcount
+        if alteradas:
+            return
+        existe = con.execute(f"SELECT 1 AS existe FROM {TABELA} WHERE entrevista_id=?", (entrevista_id,)).fetchone()
+        if existe:
+            return
+        con.execute(
+            f"""INSERT INTO {TABELA}
+                (entrevista_id, caso_id, cliente, status, entrevistador_id, entrevistador_nome,
+                 iniciado_em, solicitado_em, atualizado_em)
+                VALUES (?, ?, ?, 'aguardando_documentacao', ?, ?, ?, ?, ?)""",
+            (entrevista_id, caso_id, cliente, entrevistador_id, entrevistador_nome,
+             instante, instante, instante),
+        )
+
+
+#: Pedido de presença ou chamada assumida sem batida há mais que isto é chamada morta.
+PRAZO_CHAMADA_HORAS = 6
+_ultima_expiracao = 0.0
+
+
+def expirar_antigos(forcar: bool = False) -> int:
+    """Encerra o que ficou aberto: aba fechada sem "encerrar", servidor reiniciado."""
+    global _ultima_expiracao
+    if not forcar and time.monotonic() - _ultima_expiracao < 60:
+        return 0
+    _ultima_expiracao = time.monotonic()
+    limite = (datetime.now(timezone.utc) - timedelta(hours=PRAZO_CHAMADA_HORAS)).isoformat(timespec="seconds")
+    with conectar() as con:
+        resultado = con.execute(
+            f"""UPDATE {TABELA} SET status='encerrado'
+                 WHERE status IN ('entrevista','solicitado','assumido') AND atualizado_em < ?""",
+            (limite,),
+        )
+    return resultado.rowcount
 
 
 @roteador.get("/atendimentos", dependencies=[PodeDocumentacao])
 def listar():
-    limite = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat(timespec="seconds")
+    try:
+        expirar_antigos()
+    except Exception:  # noqa: BLE001 - a listagem filtra pelo prazo de qualquer jeito
+        pass
+    instante = datetime.now(timezone.utc)
+    limite = (instante - timedelta(minutes=3)).isoformat(timespec="seconds")
+    prazo = (instante - timedelta(hours=PRAZO_CHAMADA_HORAS)).isoformat(timespec="seconds")
     with conectar() as con:
         linhas = con.execute(f"""SELECT * FROM {TABELA}
-            WHERE status IN ('solicitado','assumido') OR (status='entrevista' AND atualizado_em>=?)
-            ORDER BY CASE status WHEN 'solicitado' THEN 0 WHEN 'assumido' THEN 1 ELSE 2 END,
-            iniciado_em""", (limite,)).fetchall()
+            WHERE status = 'aguardando_documentacao'
+               OR (status IN ('solicitado','assumido') AND atualizado_em>=?)
+               OR (status='entrevista' AND atualizado_em>=?)
+            ORDER BY CASE status WHEN 'solicitado' THEN 0 WHEN 'aguardando_documentacao' THEN 1
+                     WHEN 'assumido' THEN 2 ELSE 3 END,
+            iniciado_em""", (prazo, limite)).fetchall()
         online = con.execute(f"SELECT COUNT(*) AS total FROM {TABELA_PRESENCA} WHERE atualizado_em>=?", (limite,)).fetchone()
     itens = []
     for linha in linhas:
@@ -181,6 +262,7 @@ def listar():
     return {
         "entrevistas_ativas": len(itens),
         "solicitacoes": sum(i["status"] == "solicitado" for i in itens),
+        "aguardando_documentacao": sum(i["status"] == "aguardando_documentacao" for i in itens),
         "documentadores_online": int(online["total"]),
         "arquivos_recebidos": sum(r["arquivos_recebidos"] for r in resumos),
         "pendencias_obrigatorias": sum(len(r["pendencias"]) for r in resumos),
@@ -208,12 +290,32 @@ def assumir(entrevista_id: str, usuario: auth.Usuario = Depends(auth.usuario_atu
     with conectar() as con:
         resultado = con.execute(f"""UPDATE {TABELA} SET status='assumido',documentador_id=?,
             documentador_nome=?,assumido_em=?,atualizado_em=?
-            WHERE entrevista_id=? AND status='solicitado'""",
+            WHERE entrevista_id=? AND status IN ('solicitado','aguardando_documentacao')""",
             (usuario.id, usuario.nome, instante, instante, entrevista_id))
         linha = con.execute(f"SELECT * FROM {TABELA} WHERE entrevista_id=?", (entrevista_id,)).fetchone()
     if resultado.rowcount == 0:
-        raise HTTPException(409, "Esta chamada já foi assumida ou não está aguardando.")
+        raise HTTPException(409, "Este atendimento já foi assumido ou não está aguardando.")
+    _concluir_atendimento(entrevista_id, usuario)
     return _linha(linha)
+
+
+def _concluir_atendimento(entrevista_id: str, usuario: auth.Usuario) -> None:
+    """A documentação assumiu: o atendimento chega ao fim e o alerta se resolve."""
+    from . import atendimentos
+
+    try:
+        registro = atendimentos.por_entrevista(entrevista_id) or atendimentos.obter(entrevista_id)
+        if registro and registro["estado"] == atendimentos.DOCUMENTACAO_PENDENTE:
+            atendimentos.transicionar(
+                registro["id"], atendimentos.CONCLUIDA, de={atendimentos.DOCUMENTACAO_PENDENTE},
+                usuario_id=usuario.id, usuario_nome=usuario.nome, detalhes="documentação assumiu",
+            )
+    except Exception:  # noqa: BLE001 - assumir na fila não pode falhar por causa do atendimento
+        import logging
+
+        logging.getLogger("documentacao").warning(
+            "Atendimento da entrevista %s não foi concluído.", entrevista_id, exc_info=True
+        )
 
 
 @roteador.get("/atendimentos/{entrevista_id}")

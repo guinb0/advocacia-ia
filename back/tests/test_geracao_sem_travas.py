@@ -16,6 +16,7 @@ def test_plano_nao_repete_chamada_que_esgotou_o_prazo(monkeypatch):
         raise httpx.ReadTimeout("lento")
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(pl.httpx, "post", post)
     monkeypatch.setattr(pl.custos_api, "registrar_falha", lambda *a, **k: None)
     with pytest.raises(pl.ErroPeticao):
@@ -83,3 +84,64 @@ def test_solicitacao_orfa_ou_estourada_e_encerrada(monkeypatch):
     pl._EM_EXECUCAO.add("s1")
     assert pl._solicitacao_perdida(_solicitacao(60)) == ""
     assert "tempo limite" in pl._solicitacao_perdida(_solicitacao(pl.LIMITE_SOLICITACAO_S + 10))
+
+
+def test_plano_tem_prazo_total_e_a_geracao_segue_sem_ele(monkeypatch):
+    import time
+    monkeypatch.setattr(pl, "PRAZO_PLANO_S", 0.3)
+    monkeypatch.setattr(pl, "_llm_json", lambda *a, **k: time.sleep(2) or {"teses": [1]})
+    inicio = time.monotonic()
+    assert pl._outline_juridico("contexto") is None
+    assert time.monotonic() - inicio < 1.5
+
+
+def _resposta_falsa(texto):
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": texto}, "finish_reason": "stop"}]}
+    return R()
+
+
+def test_deepseek_lento_aciona_openai_em_paralelo(monkeypatch):
+    import time
+    chamados = []
+
+    def post(url, **kw):
+        chamados.append(url)
+        if "deepseek" in url:
+            time.sleep(3)
+            return _resposta_falsa('{"de": "deepseek"}')
+        return _resposta_falsa('{"de": "openai"}')
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "y")
+    monkeypatch.setattr(pl, "ATRASO_RESERVA_S", 0.2)
+    monkeypatch.setattr(pl.httpx, "post", post)
+    monkeypatch.setattr(pl.custos_api, "registrar", lambda *a, **k: None)
+    inicio = time.monotonic()
+    assert pl._llm_json("i", "e", timeout=10.0) == {"de": "openai"}
+    assert time.monotonic() - inicio < 2.0
+    assert any("openai" in u for u in chamados)
+
+
+def test_deepseek_rapido_nao_chama_openai(monkeypatch):
+    chamados = []
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "y")
+    monkeypatch.setattr(pl.httpx, "post", lambda url, **kw: chamados.append(url) or _resposta_falsa('{"ok": 1}'))
+    monkeypatch.setattr(pl.custos_api, "registrar", lambda *a, **k: None)
+    assert pl._llm_json("i", "e") == {"ok": 1}
+    assert len(chamados) == 1 and "deepseek" in chamados[0]
+
+
+def test_deepseek_com_erro_aciona_openai(monkeypatch):
+    import httpx
+    def post(url, **kw):
+        if "deepseek" in url:
+            raise httpx.ConnectError("fora")
+        return _resposta_falsa('{"de": "openai"}')
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "y")
+    monkeypatch.setattr(pl.httpx, "post", post)
+    monkeypatch.setattr(pl.custos_api, "registrar", lambda *a, **k: None)
+    assert pl._llm_json("i", "e") == {"de": "openai"}

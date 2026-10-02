@@ -305,7 +305,7 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
     tese_ids = {p["tese_origem"] for p in peds}
     for t in plano.get("teses") or []:
         if t.get("gera_pedido", True) and t.get("consequencia") and t["id"] not in tese_ids:
-            saida.append(_v("TESE_SEM_PEDIDO", "CLAIMS", f"{t['id']} {t['titulo'][:50]}", f"A tese {t['id']} tem consequência jurídica mas nenhum pedido correspondente.", "Registre o pedido no ledger ou marque a tese como sem pedido.", False))
+            saida.append(_v("TESE_SEM_PEDIDO", "CLAIMS", f"{t['id']} {t['titulo'][:50]}", f"A tese {t['id']} tem consequência jurídica mas nenhum pedido correspondente.", "Registre o pedido no ledger ou marque a tese como sem pedido."))
     return saida
 
 
@@ -324,6 +324,18 @@ def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[
         )
     )
     saida: list[Violacao] = []
+    soma = soma_cumulativos(plano)
+    # A regra anterior só comparava o valor QUANDO o texto já continha a linha.
+    # Assim, uma inicial com pedidos líquidos e sem valor da causa escapava do
+    # gate inteiro — defeito formal que impede o protocolo trabalhista.
+    if soma and not ocorrencias:
+        saida.append(_v(
+            "VALOR_DA_CAUSA_AUSENTE",
+            "VALUE",
+            "",
+            "Há pedidos cumulativos com valor no ledger, mas o documento não declara o valor da causa.",
+            "Renderize uma única linha de valor da causa a partir da soma canônica dos pedidos cumulativos.",
+        ))
     if len(ocorrencias) > 1:
         saida.append(_v(
             "VALOR_DA_CAUSA_DUPLICADO",
@@ -332,7 +344,6 @@ def valor_da_causa(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[
             f"«Dá-se à causa» / valor da causa aparece {len(ocorrencias)} vezes na peça.",
             "Mantenha UMA linha de valor da causa, no fechamento; remova as demais.",
         ))
-    soma = soma_cumulativos(plano)
     if ocorrencias and soma and abs(_reais(ocorrencias[0].group(1)) - soma) > 0.01:
         saida.append(_v(
             "VALOR_DA_CAUSA_NAO_FECHA",
@@ -662,13 +673,23 @@ _NAO_MONETARIO = re.compile(
     r"recolhimento|dep[óo]sito", re.I)
 
 
+_ESTABILIDADE = re.compile(r"estabilidad", re.I)
+_SUBSTITUTIVO_DA_ESTABILIDADE = re.compile(r"indeniza|pagamento|reintegr|sal[áa]rios?\s+do\s+per[íi]odo|convers", re.I)
+
+
+def _indenizacao_de_estabilidade(rotulo: str) -> bool:
+    """Estabilidade com o contrato ativo é declaratória: indenização substitutiva e reintegração pressupõem dispensa."""
+    return bool(_ESTABILIDADE.search(rotulo) and _SUBSTITUTIVO_DA_ESTABILIDADE.search(rotulo))
+
+
 def pedidos_rescisorios_com_vinculo_ativo(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[dict[str, Any]]:
     """Pedidos de verba rescisória sem término do contrato nos fatos e sem rescisão indireta pedida (vazio = nada a retirar)."""
     claims = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") == "CLAIMS")
     resto = "\n".join(str(s.get("content") or "") for s in secoes if s.get("code") != "CLAIMS")
     fatos = " ".join(str(f.get(k) or "") for f in plano.get("fatos") or [] if isinstance(f, dict) for k in ("descricao", "fato", "valor"))
     rescisorios = [p for p in plano.get("pedidos") or []
-                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")]
+                   if canonico.menciona_verba_rescisoria(f"{p.get('tipo', '')} {p.get('objeto', '')} {p.get('causa_de_pedir', '')}")
+                   or _indenizacao_de_estabilidade(f"{p.get('tipo', '')} {p.get('objeto', '')}")]
     if not rescisorios:
         return []
     indireta = canonico.pede_rescisao_indireta([{"tese": f"{resto} {claims}"}, *({"tese": p.get("tipo", ""), "pedido": p.get("objeto", "")} for p in plano.get("pedidos") or [])])

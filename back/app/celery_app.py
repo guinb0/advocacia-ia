@@ -108,6 +108,13 @@ celery_app.conf.update(
             "task": "app.tasks.manutencao.cobrar_documentos_pendentes",
             "schedule": 900.0,
         },
+        # Fora da fila `low`: a sincronização semanal do acervo ocupa aquele worker
+        # por horas, e lembrete atrasado de horas é lembrete perdido.
+        "processar-lembretes-atendimento": {
+            "task": "app.tasks.manutencao.processar_lembretes",
+            "schedule": 300.0,
+            "options": {"queue": "default", "expires": 290},
+        },
         # Sempre agendada; a tarefa não faz nada enquanto ACERVO_SINCRONIZACAO_ATIVA != 1.
         # Semanal, domingo 03:00 de Brasília: fora do expediente e longe das cargas do DJEN.
         "acervo-sincronizar": {

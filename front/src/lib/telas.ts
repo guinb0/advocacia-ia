@@ -18,6 +18,7 @@ import {
   BookOpenCheck,
   Bot,
   BriefcaseBusiness,
+  CalendarDays,
   ClipboardCheck,
   Database,
   FileCheck2,
@@ -29,6 +30,7 @@ import {
   LayoutDashboard,
   Layers,
   LibraryBig,
+  MessageCircle,
   MessageSquareText,
   PenLine,
   PhoneCall,
@@ -174,6 +176,29 @@ const DEFINICOES = {
       titulo: "Entrevista guiada",
       subtitulo:
         "Conduza o atendimento pelo roteiro, com a conversa sendo transcrita. O caso nasce daqui, já com o tipo de ação escolhido.",
+    },
+  },
+  agenda: {
+    rotulo: "Agenda",
+    apoio: "atendimentos marcados",
+    icone: CalendarDays,
+    modulo: "entrevista",
+    variante: "wide",
+    cabecalho: {
+      titulo: "Agenda de atendimentos",
+      subtitulo:
+        "Marque o atendimento, envie a confirmação pelo WhatsApp e entre na sala quando o cliente chegar.",
+    },
+  },
+  whatsapp: {
+    rotulo: "WhatsApp",
+    apoio: "mensagens e lembretes",
+    icone: MessageCircle,
+    modulo: "whatsapp",
+    variante: "wide",
+    cabecalho: {
+      titulo: "WhatsApp",
+      subtitulo: "Conexão do número, textos das mensagens automáticas, lembretes e histórico de envios.",
     },
   },
   supervisao: {

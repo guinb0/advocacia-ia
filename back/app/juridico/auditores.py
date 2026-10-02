@@ -183,6 +183,8 @@ _ILIQUIDO = re.compile(
 #: Acessórios que, por natureza, se apuram na liquidação (não são pedido ilíquido).
 _ACESSORIO_DA_LIQUIDACAO = re.compile(r"juros|corre[çc][ãa]o\s+monet|atualiza[çc][ãa]o\s+monet|honor[áa]rios|previdenci|fiscais|imposto\s+de\s+renda|"
                                       r"recolhimentos?|custas", re.I)
+_PEDIDO_MONETARIO = re.compile(r"pagamento|pagar|indeniza|multa|diferen[cç]a|adicional|horas?\s+extra|verbas|fgts|f[ée]rias|13[ºo°]|"
+                                r"sal[aá]rio|aviso\s+pr[ée]vio|pens[aã]o|pensionamento|reembolso|ressarc|danos?\s+(?:morais|materiais|est[ée]ticos)", re.I)
 
 
 def auditar_calculos(secoes: list[dict[str, Any]], pedidos: list[dict[str, Any]], calculos: list[dict[str, Any]]) -> dict[str, Any]:
@@ -225,6 +227,14 @@ def auditar_calculos(secoes: list[dict[str, Any]], pedidos: list[dict[str, Any]]
         if v not in permitidos:
             achados.append(_achado("CALCULATION", "VALOR_SEM_CALCULO", BLOQUEIA, "CLAIMS", calc.brl(v), "valor nos pedidos sem cálculo determinístico correspondente"))
     for p in pedidos:
+        descricao = f"{p.get('tipo') or ''} {p.get('objeto') or ''}"
+        if _PEDIDO_MONETARIO.search(descricao) and str(p.get("tipo_de_item") or "autonomo") == "autonomo":
+            if p.get("valor") in (None, ""):
+                achados.append(_achado("CALCULATION", "PEDIDO_MONETARIO_SEM_VALOR", BLOQUEIA, "CLAIMS", str(p.get("id") or descricao)[:120],
+                                       "pedido financeiro não tem valor líquido no ledger"))
+            elif not str(p.get("calculation_id") or ""):
+                achados.append(_achado("CALCULATION", "PEDIDO_MONETARIO_SEM_CALCULO", BLOQUEIA, "CLAIMS", str(p.get("id") or descricao)[:120],
+                                       "pedido financeiro tem valor, mas não aponta calculation_id"))
         if p.get("valor") not in (None, "") and calc.brl(p["valor"]) not in claims:
             achados.append(_achado("CALCULATION", "PEDIDO_SEM_VALOR_NO_TEXTO", ALERTA, "CLAIMS", p.get("objeto", "")[:120], f"valor calculado {calc.brl(p['valor'])} não aparece nos pedidos"))
     usos: dict[str, list[str]] = {}

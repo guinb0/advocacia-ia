@@ -7,7 +7,7 @@ export interface AtendimentoDocumentacao {
   caso_id: string | null;
   cliente: string;
   sala: string | null;
-  status: "entrevista" | "solicitado" | "assumido" | "encerrado";
+  status: "entrevista" | "solicitado" | "aguardando_documentacao" | "assumido" | "encerrado";
   entrevistador_nome: string;
   documentador_nome: string | null;
   iniciado_em: string;
@@ -56,6 +56,7 @@ export async function obterAtendimentoDocumentacao(entrevistaId: string): Promis
 export async function listarAtendimentosDocumentacao(): Promise<{
   entrevistas_ativas: number;
   solicitacoes: number;
+  aguardando_documentacao?: number;
   documentadores_online: number;
   arquivos_recebidos: number;
   pendencias_obrigatorias: number;
@@ -68,6 +69,11 @@ export async function listarAtendimentosDocumentacao(): Promise<{
 
 export async function registrarPresencaDocumentacao(): Promise<void> {
   await comoJson(await buscar("/api/documentacao/presenca", { method: "POST" }));
+}
+
+/** Tira o atendimento da fila (entrevista fechada sem pedir a Documentação). */
+export async function encerrarAtendimentoDocumentacao(entrevistaId: string): Promise<void> {
+  await comoJson(await buscar(`/api/documentacao/atendimentos/${encodeURIComponent(entrevistaId)}/encerrar`, { method: "POST" }));
 }
 
 export async function assumirAtendimentoDocumentacao(entrevistaId: string): Promise<AtendimentoDocumentacao> {

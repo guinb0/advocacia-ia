@@ -12,6 +12,8 @@ import { useState, type ReactNode } from "react";
 
 import { Aviso, Botao, Cartao, Selo, Vazio } from "@/components/ui/Basicos";
 import AgenteGeral from "@/components/AgenteGeral";
+import Agenda from "@/components/atendimento/Agenda";
+import ModuloWhatsapp from "@/components/whatsapp/ModuloWhatsapp";
 import Carteira from "@/components/carteira/Carteira";
 import Chat from "@/components/chat/Chat";
 import Dados from "@/components/caso/Dados";
@@ -150,6 +152,8 @@ export const DESENHO_DA_TELA: Record<Tela, DesenhoTela> = {
       onAbrirAnalises={c.abrirAnalises}
     />
   ),
+  agenda: (c) => <Agenda onNavegar={c.setTela} onAbrirCaso={c.abrirCaso} />,
+  whatsapp: () => <ModuloWhatsapp />,
   avulso: () => <AnaliseAvulsa />,
 };
 

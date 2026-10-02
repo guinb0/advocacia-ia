@@ -954,6 +954,28 @@ class RoteiroInvalido(ValueError):
     """Roteiro que a tela não conseguiria exibir, com o motivo em português."""
 
 
+_INVISIVEIS = dict.fromkeys((0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF), None)
+_RE_MARCA_MARKDOWN = re.compile(r"^\s*(?:#{1,6}\s+|[*_]{2,}|>\s+)+")
+_RE_TITULO_DE_SECAO = re.compile(r"^\s*(?:bloco|m[oó]dulo|etapa|parte|se[cç][aã]o)\s*\d+\s*(?:[—–:\-]|$)", re.IGNORECASE)
+
+
+def limpar_texto(bruto: Any) -> str:
+    """Texto como o documento de origem o deixou, sem os restos da conversão.
+
+    Importar `.docx` traz marcação de título (`#`, `**`), caractere de largura zero e tabulação no lugar
+    de espaço. Nenhum dos três é conteúdo, e todos aparecem na tela do atendimento.
+    """
+    texto = str(bruto or "").translate(_INVISIVEIS)
+    texto = _RE_MARCA_MARKDOWN.sub("", texto)
+    texto = texto.replace("**", "")
+    return re.sub(r"[ 	 ]+", " ", texto).strip()
+
+
+def eh_titulo_de_secao(texto: str) -> bool:
+    """«BLOCO 5 — Atendimento Médico» é cabeçalho do documento, não uma pergunta a fazer ao cliente."""
+    return bool(_RE_TITULO_DE_SECAO.match(texto))
+
+
 def identificador(bruto: Any, usados: set[str], prefixo: str) -> str:
     """Um id estável, em ascii, garantidamente único dentro de `usados`.
 
@@ -980,7 +1002,7 @@ def de_dict(dados: Any) -> Roteiro:
     if not isinstance(dados, dict):
         raise RoteiroInvalido("O roteiro precisa ser um objeto JSON.")
 
-    nome = str(dados.get("nome") or "").strip()
+    nome = limpar_texto(dados.get("nome"))
     if not nome:
         raise RoteiroInvalido("O roteiro precisa de um nome.")
 
@@ -1002,7 +1024,7 @@ def de_dict(dados: Any) -> Roteiro:
     return Roteiro(
         codigo=codigo,
         nome=nome[:200],
-        descricao=str(dados.get("descricao") or "").strip()[:1000],
+        descricao=limpar_texto(dados.get("descricao"))[:1000],
         blocos=blocos,
         saudacao=_lista_de_texto(dados.get("saudacao")),
         encerramento=_lista_de_texto(dados.get("encerramento")),
@@ -1051,14 +1073,18 @@ def _bloco_de_dict(dados: Any, usados: set[str]) -> Bloco:
     if not isinstance(dados, dict):
         raise RoteiroInvalido("Cada bloco precisa ser um objeto JSON.")
 
-    titulo = str(dados.get("titulo") or "").strip()
+    titulo = limpar_texto(dados.get("titulo"))
     if not titulo:
         raise RoteiroInvalido("Todo bloco precisa de um título.")
 
     modulo = str(dados.get("modulo") or "").strip() or None
     perguntas_brutas = dados.get("perguntas")
     perguntas = (
-        [_pergunta_de_dict(p, usados) for p in perguntas_brutas]
+        [
+            _pergunta_de_dict(p, usados)
+            for p in perguntas_brutas
+            if not (isinstance(p, dict) and eh_titulo_de_secao(limpar_texto(p.get("texto"))))
+        ]
         if isinstance(perguntas_brutas, list)
         else []
     )
@@ -1078,7 +1104,7 @@ def _pergunta_de_dict(dados: Any, usados: set[str]) -> Pergunta:
     if not isinstance(dados, dict):
         raise RoteiroInvalido("Cada pergunta precisa ser um objeto JSON.")
 
-    texto = str(dados.get("texto") or "").strip()
+    texto = limpar_texto(dados.get("texto"))
     if not texto:
         raise RoteiroInvalido("Toda pergunta precisa de um enunciado.")
 
@@ -1249,8 +1275,8 @@ def _importado_por_codigo(
     if registro is not None:
         try:
             salvo = de_dict(registro.get("conteudo"))
-        except RoteiroInvalido:
-            log.warning("Roteiro salvo '%s' está inválido e foi ignorado.", codigo)
+        except RoteiroInvalido as erro:
+            log.warning("Roteiro salvo '%s' está inválido e foi ignorado: %s", codigo, erro)
 
     _cache_por_codigo[codigo] = (agora + _TTL_CACHE_S, salvo, registro)
     return salvo, registro
@@ -1298,7 +1324,7 @@ def listar_resumos() -> list[dict[str, Any]]:
         resultado.append(
             {
                 "codigo": codigo,
-                "nome": salvo.get("nome", embutido.nome) if salvo_ativo else embutido.nome,
+                "nome": limpar_texto(salvo.get("nome")) or embutido.nome if salvo_ativo else embutido.nome,
                 "descricao": (
                     salvo.get("descricao", embutido.descricao)
                     if salvo_ativo
@@ -1317,8 +1343,8 @@ def listar_resumos() -> list[dict[str, Any]]:
         resultado.append(
             {
                 "codigo": codigo,
-                "nome": str(salvo.get("nome") or codigo),
-                "descricao": str(salvo.get("descricao") or ""),
+                "nome": limpar_texto(salvo.get("nome")) or codigo,
+                "descricao": limpar_texto(salvo.get("descricao")),
                 "importado": True,
                 "original_do_sistema": False,
                 "origem": str(salvo.get("origem") or ""),

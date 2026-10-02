@@ -38,7 +38,12 @@ ACERVO_DIVERGE = "ACERVO_DIVERGE"
 
 
 def ativa() -> bool:
-    return os.getenv("PETICAO_ATUALIZACAO_JURIDICA", "1").strip().lower() not in ("0", "false", "nao", "não", "off")
+    """A atualização é obrigatória em toda geração de petição.
+
+    Sem busca web configurada, ``pesquisar`` devolve uma pendência explícita;
+    não silenciamos a etapa por variável de ambiente.
+    """
+    return True
 
 
 def max_teses() -> int:

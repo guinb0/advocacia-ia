@@ -48,6 +48,34 @@ def cobrar_documentos_pendentes() -> int:
     return processar_cobrancas_documentos()
 
 
+@celery_app.task(name="app.tasks.manutencao.processar_lembretes")
+def processar_lembretes() -> dict:
+    """Lembretes do agendamento, faltas vencidas e entregas que nunca chegaram.
+
+    Cada etapa é isolada: uma falha no WhatsApp não deixa de registrar a falta.
+    """
+    from .. import alertas, atendimentos, automacoes_whatsapp, lembretes
+
+    resultado: dict = {}
+    try:
+        alertas.varrer(forcar=True)
+    except Exception:  # noqa: BLE001
+        log.warning("varredura de atendimentos falhou", exc_info=True)
+        try:
+            resultado["vencidos"] = atendimentos.varrer_vencidos()
+        except Exception:  # noqa: BLE001
+            log.warning("varredura de vencidos falhou", exc_info=True)
+    try:
+        resultado["lembretes"] = lembretes.processar()
+    except Exception:  # noqa: BLE001
+        log.warning("lembretes falharam", exc_info=True)
+    try:
+        resultado["expirados"] = automacoes_whatsapp.expirar_sem_entrega()
+    except Exception:  # noqa: BLE001
+        log.warning("expiração de envios falhou", exc_info=True)
+    return resultado
+
+
 def _leitor_de_documentos_ativo() -> tuple[bool, set[str]]:
     """O worker de OCR está no ar, e quais entregas ele já tem em mãos?
 

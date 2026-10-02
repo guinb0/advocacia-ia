@@ -44,14 +44,18 @@ import {
   Selo,
   Vazio,
 } from "@/components/ui/Basicos";
+import CriteriosDoTipo from "@/components/admin/CriteriosDoTipo";
 import {
   ApiError,
+  aprovarTipoIa,
   criarTipoCaso,
   editarTipoCaso,
   historicoTipoCaso,
   impactoTipoCaso,
   listarTiposCaso,
   listarTiposDocumento,
+  metadadosTiposIa,
+  type MetadadosTipoIa,
 } from "@/lib/api";
 import { AUTH_ATIVA, useSessao } from "@/lib/auth";
 import type {
@@ -185,6 +189,8 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
   const podeEditar = !AUTH_ATIVA || sessao.modulos.includes("tipos_caso");
 
   const [tipos, setTipos] = useState<TipoCaso[]>([]);
+  const [metaIa, setMetaIa] = useState<Record<string, MetadadosTipoIa>>({});
+  const [aprovando, setAprovando] = useState(false);
   const [glossario, setGlossario] = useState<TipoDocumentoGlossario[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -202,7 +208,12 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
   const recarregar = useCallback(async () => {
     setCarregando(true);
     try {
-      setTipos(await listarTiposCaso(true));
+      const [lista, meta] = await Promise.all([
+        listarTiposCaso(true),
+        metadadosTiposIa().catch(() => ({}) as Record<string, MetadadosTipoIa>),
+      ]);
+      setTipos(lista);
+      setMetaIa(meta);
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : String(e));
@@ -393,7 +404,22 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
     }
   }
 
+  async function aprovar(codigo: string) {
+    setAprovando(true);
+    setErroPainel(null);
+    try {
+      await aprovarTipoIa(codigo);
+      setRecado("Ação revisada: deixou de aparecer como gerada por IA.");
+      await recarregar();
+    } catch (e) {
+      setErroPainel(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAprovando(false);
+    }
+  }
+
   const doSistema = painel.modo === "editar" && painel.tipo.sistema;
+  const iaDoPainel = painel.modo === "editar" ? metaIa[painel.tipo.codigo] : undefined;
   const podeSalvar =
     formulario.nome.trim().length >= 2 &&
     (doSistema || formulario.itens.every((item) => item.nome.trim().length > 0));
@@ -507,6 +533,9 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
                       desativada
                     </Selo>
                   )}
+                  {metaIa[t.codigo]?.requer_revisao && (
+                    <Selo tom="atencao">Gerado por IA — requer revisão</Selo>
+                  )}
                 </div>
                 <p className="mt-1 mb-0 truncate font-codigo text-[11px] text-tinta-3" title={t.codigo}>
                   {t.codigo}
@@ -597,6 +626,37 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
                   “{painel.tipo.nome}” vem do checklist em .docx do escritório. Aqui só dá para
                   ligar e desligar: o nome, o checklist e as pistas dela são conferidos contra o
                   documento original.
+                </Aviso>
+              )}
+
+              {iaDoPainel?.requer_revisao && painel.modo === "editar" && (
+                <Aviso tom="atencao">
+                  <strong>Gerado por IA — requer revisão.</strong> A análise de um atendimento sugeriu
+                  esta ação e o advogado a aceitou. Confira o nome, os critérios e o checklist antes
+                  de aprovar.
+                  {iaDoPainel.informacoes_necessarias.length > 0 && (
+                    <span className="mt-1 block">
+                      Informações a confirmar: {iaDoPainel.informacoes_necessarias.join("; ")}
+                    </span>
+                  )}
+                  {iaDoPainel.fundamentos.length > 0 && (
+                    <span className="mt-1 block">
+                      Fundamentos citados:{" "}
+                      {iaDoPainel.fundamentos
+                        .map((f) => f.referencia || f.descricao)
+                        .filter(Boolean)
+                        .join("; ")}
+                    </span>
+                  )}
+                  <span className="mt-2 block">
+                    <Botao
+                      pequeno
+                      carregando={aprovando}
+                      onClick={() => void aprovar(painel.tipo.codigo)}
+                    >
+                      Aprovar ação
+                    </Botao>
+                  </span>
                 </Aviso>
               )}
 
@@ -763,7 +823,7 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
                                       alterarItem(posicao, { obrigatorio: evento.target.checked })
                                     }
                                   />
-                                  <span>Obrigatório</span>
+                                  <span>Documento mínimo</span>
                                 </Marcacao>
                                 <label className="min-w-[200px] flex-1 text-xs text-tinta-3">
                                   Tipo do glossário
@@ -800,7 +860,8 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
                         </div>
                       )}
                       <AjudaCampo>
-                        O tipo do glossário é o que deixa o sistema conferir sozinho se o arquivo
+                        Documento mínimo é o que o caso não anda sem: entra como obrigatório no
+                        checklist e é o que a equipe de documentação cobra primeiro. O tipo do glossário é o que deixa o sistema conferir sozinho se o arquivo
                         enviado é mesmo o documento pedido. Item sem tipo é aceito e conferido por
                         quem recebe.
                       </AjudaCampo>
@@ -810,6 +871,8 @@ export default function TiposDeCaso({ onVoltar }: { onVoltar: () => void }) {
 
                 {painel.modo === "editar" && (
                   <>
+                    <CriteriosDoTipo codigo={painel.tipo.codigo} podeEditar={podeEditar} />
+
                     <Marcacao>
                       <input
                         type="checkbox"

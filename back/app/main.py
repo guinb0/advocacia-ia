@@ -20,11 +20,15 @@ from starlette.concurrency import run_in_threadpool
 from . import (
     advbox,
     agente,
+    alertas,
+    analise_acoes,
     armazenamento,
+    atendimentos,
     assinatura_config,
     auth,
     case_brief_estado,
     chat,
+    criterios_caso,
     dados,
     documentacao,
     duplicidade,
@@ -45,6 +49,7 @@ from . import (
     tipos_documento,
     usuarios,
     whatsapp,
+    whatsapp_modelos,
 )
 from .banco import limite_de_espera_por_lock
 from .caminhos import SKILL_EMBUTIDA
@@ -52,6 +57,7 @@ from .rotas import (
     acervo as rotas_acervo,
     analise,
     assinatura as rotas_assinatura,
+    atendimentos as rotas_atendimentos,
     casos as rotas_casos,
     categorias as rotas_categorias,
     chamada as rotas_chamada,
@@ -153,6 +159,19 @@ async def ciclo_de_vida(_: FastAPI):
             await run_in_threadpool(tipos_caso.inicializar)
         except Exception:
             log.exception("Não foi possível inicializar o catálogo de tipos de caso")
+        # Atendimento, alertas, modelos de WhatsApp e análise: cada tabela é
+        # independente, e a falha de uma não impede a API nem as outras.
+        for modulo, rotulo in (
+            (atendimentos, "atendimentos"),
+            (alertas, "alertas"),
+            (whatsapp_modelos, "modelos de WhatsApp"),
+            (criterios_caso, "critérios dos tipos de caso"),
+            (analise_acoes, "análises de atendimento"),
+        ):
+            try:
+                await run_in_threadpool(modulo.inicializar)
+            except Exception:
+                log.exception("Não foi possível inicializar %s", rotulo)
     yield
 
 
@@ -242,6 +261,8 @@ PUBLICAS = {
     "/openapi.json",
     "/redoc",
     "/metrics",  # raspado pelo Prometheus, que não manda Authorization
+    # A Evolution não tem login: o webhook de entrega confere o token da URL.
+    "/api/whatsapp/webhook",
 }
 
 
@@ -309,8 +330,11 @@ app.include_router(documentacao.roteador)
 app.include_router(chat.roteador)
 app.include_router(operacao.roteador)
 app.include_router(whatsapp.roteador)
+app.include_router(whatsapp_modelos.roteador)
 app.include_router(tipos_documento.roteador)
 app.include_router(tipos_caso.roteador)
+app.include_router(criterios_caso.roteador)
+app.include_router(criterios_caso.roteador_ia)
 app.include_router(google_drive.roteador)
 
 
@@ -436,6 +460,7 @@ for _area in (
     rotas_tactiq,
     extracao,
     rotas_chamada,
+    rotas_atendimentos,
     analise,
     rotas_casos,
     rotas_revisao,

@@ -310,6 +310,8 @@ interface Props {
   onEscuta?: (estado: EstadoEscuta | null) => void;
   /** A versão exata que a tela mostra e que a IA deve revisar. */
   onContextoRevisao?: (contexto: ContextoRevisaoRoteiro | null) => void;
+  /** Mostra a barra "Pergunte agora" (pergunta da vez + "Próxima pergunta"). */
+  conducao?: boolean;
   ref?: Ref<ManipuladorRoteiro>;
 }
 
@@ -318,6 +320,7 @@ export default function Roteiro({
   onRespostas,
   onEscuta,
   onContextoRevisao,
+  conducao = false,
   ref,
 }: Props) {
   const [roteiro, setRoteiro] = useState<RoteiroCompleto | null>(null);
@@ -479,7 +482,17 @@ export default function Roteiro({
   const conferido = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    obterRoteiro(codigo).then(setRoteiro).catch((e) => setErro(String(e)));
+    obterRoteiro(codigo)
+      .then((carregado) => {
+        const total = carregado.blocos.reduce((soma, b) => soma + b.perguntas.length, 0);
+        if (total === 0) {
+          console.error("roteiro sem perguntas", { codigo, blocos: carregado.blocos.length });
+          setErro("Não foi possível carregar o conteúdo deste roteiro: ele chegou sem perguntas.");
+          return;
+        }
+        setRoteiro(carregado);
+      })
+      .catch((e) => setErro(String(e)));
   }, [codigo]);
 
   /* O que a conferência precisa saber para NÃO cobrar à toa.
@@ -1536,6 +1549,7 @@ function preencherMarcadores(
    * A trava do microfone não mudou: a transcrição continua começando só depois
    * de nome, CPF, UF e município (ver o auto-início, acima). */
   const roteiroRevelado = escutaEncerrada || revisada;
+  const temSaudacao = (roteiro?.saudacao?.length ?? 0) > 0;
   /* Antes da escuta, a tela é a identificação MAIS o que o CPF acabou de puxar.
    *
    * Os cinco campos fixos nunca somem; os demais (mãe, nascimento, endereço,
@@ -1837,8 +1851,10 @@ function preencherMarcadores(
         * Fica recolhida depois de lida porque ela é longa e ocupa a tela que o
         * roteiro precisa; mas não some, porque a atendente pode querer voltar a
         * uma frase. Ver `roteiros.SAUDACAO`. */}
-      {escutando && roteiro.saudacao?.length > 0 && (
+      {escutando && (
         <section id="leitura-do-roteiro" className="scroll-mt-24 border-l-[3px] border-tinta px-4 py-3 mb-5 bg-papel-2">
+          {temSaudacao && (
+            <>
           <div className="flex items-center justify-between gap-[10px]">
             <span className="text-[10px] font-semibold leading-none font-ui tracking-[0.14em] text-tinta-3">
               LEIA AO CLIENTE
@@ -1874,6 +1890,8 @@ function preencherMarcadores(
                 {comNomes(p)}
               </p>
             ))}
+            </>
+          )}
 
           {/* O ROTEIRO, ESCRITO, LOGO DEPOIS DO "PODEMOS COMEÇAR?".
             *
@@ -1916,7 +1934,8 @@ function preencherMarcadores(
             * não por cima do painel: os dois grudam ao rolar, e um passaria por
             * cima do outro. Enquanto a escuta não abriu ela só aponta por onde
             * começar — sem relógio, porque não há entrevista para cobrar ainda. */}
-          {false && <Conducao
+          {conducao && <Conducao
+            rotuloProxima="Próxima pergunta"
             pergunta={atual?.pergunta ?? null}
             bloco={atual?.bloco ?? ""}
             posicao={posicaoAtual + 1}

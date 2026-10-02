@@ -48,6 +48,11 @@ def instalar(resposta: dict, documentos: list[dict] | None = None) -> list[str]:
     # resultado cacheado do 1º e o mock novo nunca seria chamado.
     ad.armazenamento.obter_caso = lambda _id: {"atualizado_em": "teste"}  # type: ignore[assignment]
     ad._analisar_cacheado.limpar_cache()  # type: ignore[attr-defined]
+    # A análise também fica guardada no banco por conteúdo; aqui nada pode ler nem gravar lá.
+    from app.agente import contexto_caso
+
+    contexto_caso.analise_guardada = lambda _id, _assinatura: None  # type: ignore[assignment]
+    contexto_caso.guardar_analise = lambda _id, _assinatura, _resultado: None  # type: ignore[assignment]
     return enviadas
 
 

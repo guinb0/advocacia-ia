@@ -30,55 +30,174 @@ def _iso(valor: datetime | None = None) -> str:
     return (valor or _agora_dt()).isoformat()
 
 
+#: Um 'enviando' sem notícia por este tempo é processo que morreu no meio (worker
+#: reiniciado, API derrubada). Antes ele travava a chave PARA SEMPRE — nem o
+#: reenvio forçado passava, e a tela dizia "já enviado" de uma mensagem que nunca saiu.
+MINUTOS_ENVIO_ORFAO = 5
+
+#: Ciclo de entrega mostrado na tela. `status` (enviando/enviado/falhou) continua
+#: sendo a trava de idempotência; `status_entrega` é o que o cliente viu.
+PENDENTE = "PENDENTE"
+PROCESSANDO = "PROCESSANDO"
+ENVIADO = "ENVIADO"
+ENTREGUE = "ENTREGUE"
+LIDO = "LIDO"
+FALHOU = "FALHOU"
+EXPIRADO = "EXPIRADO"
+DESTINATARIO_INVALIDO = "DESTINATARIO_INVALIDO"
+#: Estados que liberam reenvio sem confirmação explícita.
+REENVIAVEIS = frozenset({FALHOU, EXPIRADO, DESTINATARIO_INVALIDO})
+#: A entrega só anda para a frente: um "lido" não volta a "entregue".
+_ORDEM_ENTREGA = {PROCESSANDO: 1, ENVIADO: 2, ENTREGUE: 3, LIDO: 4}
+
+_ERROS_DE_CHAVE: tuple[type[Exception], ...] = (pyodbc.IntegrityError,)
+try:  # os testes rodam estas consultas num SQLite em memória
+    import sqlite3
+
+    _ERROS_DE_CHAVE = (pyodbc.IntegrityError, sqlite3.IntegrityError)
+except ImportError:  # pragma: no cover
+    pass
+
+
 def reservar(
-    chave: str, tipo: str, destino: str, caso_id: str | None = None, forcar: bool = False
+    chave: str, tipo: str, destino: str, caso_id: str | None = None, forcar: bool = False,
+    atendimento_id: str | None = None, texto: str | None = None,
 ) -> bool:
     """Reserva um envio, impedindo duplicidade entre API e workers concorrentes.
 
     `forcar` libera um reenvio deliberado: um envio já CONCLUÍDO ('enviado')
     deixa de barrar a operação — é o caso do atendente que, com o cliente ainda
     na chamada, pede o link de novo. O que nunca é liberado é um envio EM
-    ANDAMENTO ('enviando'): essa continua sendo a defesa contra clique duplo e
-    corrida entre a API e o worker.
+    ANDAMENTO ('enviando') recente: essa continua sendo a defesa contra clique
+    duplo e corrida entre a API e o worker. O 'enviando' órfão (mais velho que
+    `MINUTOS_ENVIO_ORFAO`) volta a ser reservável.
     """
     instante = _iso()
+    orfao = _iso(_agora_dt() - timedelta(minutes=MINUTOS_ENVIO_ORFAO))
+    resumo = (texto or "")[:600] or None
     try:
         with conectar() as con:
             # UPDATE condicional é uma única operação no banco. O antigo
             # SELECT seguido de UPDATE deixava dois workers lerem "falhou" e
             # ambos reservarem a mesma chave.
-            atualizada = con.execute(
+            atualizadas = con.execute(
                 """UPDATE automacoes_whatsapp
                       SET status = 'enviando', tentativas = tentativas + 1,
-                          ultimo_erro = NULL, atualizado_em = ?
-                   OUTPUT inserted.chave
+                          ultimo_erro = NULL, atualizado_em = ?, status_entrega = ?,
+                          destino = ?, mensagem_id = NULL, entregue_em = NULL, lido_em = NULL,
+                          texto_resumo = COALESCE(?, texto_resumo)
                     WHERE chave = ?
-                      AND status <> 'enviando'
+                      AND (status <> 'enviando' OR atualizado_em < ?)
                       AND (? = 1 OR status <> 'enviado')""",
-                (instante, chave, int(forcar)),
-            ).fetchone()
-            if atualizada:
+                (instante, PROCESSANDO, destino, resumo, chave, orfao, int(forcar)),
+            ).rowcount
+            if atualizadas:
                 return True
+            existe = con.execute(
+                "SELECT 1 AS existe FROM automacoes_whatsapp WHERE chave = ?", (chave,)
+            ).fetchone()
+            if existe:
+                return False
             con.execute(
                 """INSERT INTO automacoes_whatsapp
-                   (chave, tipo, caso_id, destino, status, tentativas, criado_em, atualizado_em)
-                   VALUES (?, ?, ?, ?, 'enviando', 1, ?, ?)""",
-                (chave, tipo, caso_id, destino, instante, instante),
+                   (chave, tipo, caso_id, destino, status, tentativas, criado_em, atualizado_em,
+                    status_entrega, atendimento_id, texto_resumo)
+                   VALUES (?, ?, ?, ?, 'enviando', 1, ?, ?, ?, ?, ?)""",
+                (chave, tipo, caso_id, destino, instante, instante, PROCESSANDO,
+                 atendimento_id, resumo),
             )
         return True
-    except pyodbc.IntegrityError:
+    except _ERROS_DE_CHAVE:
         return False
 
 
-def finalizar(chave: str, erro: str | None = None) -> None:
+def finalizar(
+    chave: str, erro: str | None = None, *, mensagem_id: str | None = None,
+    status_entrega: str | None = None,
+) -> None:
     instante = _iso()
+    entrega = status_entrega or (FALHOU if erro else ENVIADO)
     with conectar() as con:
         con.execute(
             """UPDATE automacoes_whatsapp
-                  SET status = ?, ultimo_erro = ?, enviado_em = ?, atualizado_em = ?
+                  SET status = ?, ultimo_erro = ?, enviado_em = ?, atualizado_em = ?,
+                      status_entrega = ?, mensagem_id = ?
                 WHERE chave = ?""",
-            ("falhou" if erro else "enviado", erro, None if erro else instante, instante, chave),
+            ("falhou" if erro else "enviado", erro, None if erro else instante, instante,
+             entrega, mensagem_id, chave),
         )
+
+
+def obter_envio(chave: str) -> dict[str, Any] | None:
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT * FROM automacoes_whatsapp WHERE chave = ?", (chave,)
+        ).fetchone()
+    return dict(zip(linha.keys(), linha)) if linha else None
+
+
+def atualizar_entrega(mensagem_id: str, status_entrega: str) -> int:
+    """O webhook da Evolution contou que a mensagem chegou, foi lida ou falhou."""
+    if not mensagem_id:
+        return 0
+    instante = _iso()
+    with conectar() as con:
+        linha = con.execute(
+            "SELECT chave, status_entrega FROM automacoes_whatsapp WHERE mensagem_id = ?",
+            (mensagem_id,),
+        ).fetchone()
+        if linha is None:
+            return 0
+        atual = str(linha["status_entrega"] or "")
+        if status_entrega in _ORDEM_ENTREGA and _ORDEM_ENTREGA.get(atual, 0) >= _ORDEM_ENTREGA[status_entrega]:
+            return 0
+        extras = ""
+        if status_entrega == ENTREGUE:
+            extras = ", entregue_em = ?"
+        elif status_entrega == LIDO:
+            extras = ", lido_em = ?, entregue_em = COALESCE(entregue_em, ?)"
+        params: list[Any] = [status_entrega, instante]
+        if status_entrega == ENTREGUE:
+            params.append(instante)
+        elif status_entrega == LIDO:
+            params += [instante, instante]
+        if status_entrega == FALHOU:
+            extras = ", status = 'falhou'"
+        return con.execute(
+            f"UPDATE automacoes_whatsapp SET status_entrega = ?, atualizado_em = ?{extras} "
+            "WHERE chave = ?",
+            (*params, linha["chave"]),
+        ).rowcount
+
+
+def expirar_sem_entrega(horas: int = 24) -> int:
+    """Enviado que nunca chegou ao aparelho em `horas` vira EXPIRADO (reenviável)."""
+    limite = _iso(_agora_dt() - timedelta(hours=horas))
+    with conectar() as con:
+        return con.execute(
+            """UPDATE automacoes_whatsapp SET status_entrega = ?, atualizado_em = ?
+                WHERE status_entrega = ? AND enviado_em IS NOT NULL AND enviado_em < ?""",
+            (EXPIRADO, _iso(), ENVIADO, limite),
+        ).rowcount
+
+
+def historico(
+    *, dias: int = 30, tipo: str | None = None, atendimento_id: str | None = None,
+    caso_id: str | None = None, limite: int = 200,
+) -> list[dict[str, Any]]:
+    filtros = ["criado_em >= ?"]
+    params: list[Any] = [_iso(_agora_dt() - timedelta(days=max(1, dias)))]
+    for coluna, valor in (("tipo", tipo), ("atendimento_id", atendimento_id), ("caso_id", caso_id)):
+        if valor:
+            filtros.append(f"{coluna} = ?")
+            params.append(valor)
+    with conectar() as con:
+        linhas = con.execute(
+            f"SELECT * FROM automacoes_whatsapp WHERE {' AND '.join(filtros)} "
+            "ORDER BY atualizado_em DESC",
+            tuple(params),
+        ).fetchall()
+    return [dict(zip(linha.keys(), linha)) for linha in linhas[: max(1, limite)]]
 
 
 def telefone_do_caso(caso_id: str) -> str:

@@ -140,6 +140,17 @@ def test_6_majoracao_por_consequencia_do_mesmo_evento_nao_e_segunda_indenizacao(
     assert "MAJORACAO_COMO_SEGUNDA_INDENIZACAO" in cods(df.pedidos_no_texto([{"code": "CLAIMS", "content": claims}]))
 
 
+def test_6a_pedidos_nao_aceitam_fato_livre_do_redator():
+    pedido = _p("P01", "Dano moral", "indenização por dano moral decorrente da fratura documentada", 10000.0)
+    plano_ = plano([pedido])
+    texto, _ = pp.renderizar_pedidos(
+        plano_,
+        lambda _ps: {"abertura": "Diante do exposto, requer:", "itens": {"P01": "indenização por dano moral com agravamento por TEPT de R$ 50.000,00"}},
+    )
+    assert "TEPT" not in texto and "50.000" not in texto
+    assert "fratura documentada" in texto and "10.000,00" in texto
+
+
 def test_6b_mesma_reparacao_por_bem_juridico_evento_e_objeto_mesmo_com_texto_diferente():
     a = _p("P01", "reparação", "compensação pecuniária", 10000.0, bem_juridico="integridade psíquica", evento_causador="evento X", objeto_economico="indenização em dinheiro", dano="abalo psíquico")
     b = _p("P02", "compensação", "valor pelo sofrimento", 5000.0, bem_juridico="integridade psíquica", evento_causador="evento X", objeto_economico="indenização em dinheiro", dano="abalo psíquico agravado")

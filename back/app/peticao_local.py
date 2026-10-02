@@ -5,7 +5,8 @@ from __future__ import annotations
 import contextvars
 import functools
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
 import io
 import json
 import statistics
@@ -896,6 +897,28 @@ def carregar(caso_id: str) -> dict[str, Any] | None:
 
 @skill_peticao.com_skill_do_caso
 def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
+    # Nenhum caminho de edição/exportação pode conservar READY de uma versão
+    # anterior: revalida o texto que efetivamente será persistido. A geração
+    # completa já fez auditorias mais profundas; isto é a rede determinística
+    # comum a geração, edição humana e revisões automáticas.
+    secoes = [s for s in dados.get("sections") or [] if s.get("code") != "JURIMETRY"]
+    if secoes:
+        try:
+            _, violacoes, _ = _conferir_contra_os_autos(caso_id, secoes, corrigir=False)
+            _aplicar_conferencia(dados, secoes, violacoes)
+            if any(v.bloqueia for v in violacoes):
+                prontidao = dados.setdefault("readiness", {})
+                prontidao["ready"] = False
+                prontidao["status"] = "BLOCKED"
+                prontidao.setdefault("blocking_issues", []).extend(
+                    f"[{v.codigo}] {v.motivo}"[:200] for v in violacoes if v.bloqueia
+                )
+        except Exception:  # noqa: BLE001 - falha de conferência também não autoriza READY
+            dados.setdefault("readiness", {})["ready"] = False
+            dados["readiness"]["status"] = "BLOCKED"
+            dados["readiness"].setdefault("blocking_issues", []).append(
+                "Conferência final não executou; protocolo bloqueado."
+            )
     dados["updated_at"] = _agora()
     dados["docx_style_version"] = DOCX_STYLE_VERSION
     armazenamento.salvar_peticao_local(
@@ -922,14 +945,120 @@ def _salvar(caso_id: str, dados: dict[str, Any]) -> dict[str, Any]:
 MAX_TOKENS_RESPOSTA = int(os.getenv("PETICAO_MAX_TOKENS", "100000"))
 
 
+#: O plano é reforço da redação, não a peça: teto de saída e prazo TOTAL próprios. O timeout do httpx vale por
+#: leitura de socket, e uma resposta que pinga devagar passava dos 18% por minutos sem fim.
+MAX_TOKENS_PLANO = int(os.getenv("PETICAO_MAX_TOKENS_PLANO", "16000"))
+PRAZO_PLANO_S = float(os.getenv("PETICAO_PRAZO_PLANO_S", "150"))
+_EXECUTOR_PRAZO = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-prazo")
+_EXECUTOR_PROVEDOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm-provedor")
+
+
+def _com_prazo_total(chamada: Any, prazo_s: float) -> Any:
+    """Roda a chamada e desiste dela depois de `prazo_s` de relógio, qualquer que seja o estado do socket."""
+    futuro = _EXECUTOR_PRAZO.submit(contextvars.copy_context().run, chamada)
+    try:
+        return futuro.result(timeout=prazo_s)
+    except TimeoutError as erro:
+        futuro.cancel()
+        raise ErroPeticao(f"a chamada ao modelo passou de {prazo_s:.0f}s e foi abandonada") from erro
+
+
+#: DeepSeek lento ou fora do ar não pode parar a peça (18/09 e 01/10: um "oi" levava mais de 40 s). Passado este
+#: tempo sem resposta, a OpenAI é chamada em paralelo e vale quem responder primeiro com sucesso.
+ATRASO_RESERVA_S = float(os.getenv("PETICAO_ATRASO_RESERVA_S", "60"))
+#: Pedido grande demora de verdade (140 mil caracteres de entrada levam ~90 s): o atraso cresce com ele.
+ATRASO_POR_MIL_CARACTERES_S = float(os.getenv("PETICAO_ATRASO_POR_MIL_S", "0.4"))
+MODELO_RESERVA = os.getenv("PETICAO_MODELO_RESERVA", "") or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
+
+
+def _reserva_configurada() -> tuple[str, str] | None:
+    chave = os.getenv("OPENAI_API_KEY", "").strip()
+    if not chave:
+        return None
+    return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"), chave
+
+
+def _chamar_provedor(fornecedor: str, base: str, chave: str, modelo: str, instrucao: str, entrada: str,
+                     max_tokens: int | None, timeout: float) -> dict[str, Any]:
+    teto = max_tokens or MAX_TOKENS_RESPOSTA
+    corpo: dict[str, Any] = {
+        "model": modelo,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": instrucao}, {"role": "user", "content": entrada[:120_000]}],
+    }
+    if fornecedor == "openai":
+        corpo["max_completion_tokens"] = min(teto, 64000)
+    else:
+        corpo["temperature"] = 0.2
+        corpo["max_tokens"] = teto
+    inicio = time.monotonic()
+    resposta = httpx.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {chave}"}, json=corpo,
+                          timeout=timeout)
+    resposta.raise_for_status()
+    custos_api.registrar(fornecedor, modelo, "geracao_peticao", resposta,
+                         latencia_ms=round((time.monotonic() - inicio) * 1000))
+    return resposta.json()["choices"][0]
+
+
+def _escolha_com_reserva(base: str, chave: str, modelo: str, instrucao: str, entrada: str,
+                         max_tokens: int | None, timeout: float, *, reserva_permitida: bool) -> dict[str, Any]:
+    reserva = _reserva_configurada() if reserva_permitida else None
+    if reserva is None:
+        return _chamar_provedor("deepseek", base, chave, modelo, instrucao, entrada, max_tokens, timeout)
+
+    def lancar(fornecedor: str, b: str, c: str, m: str) -> Any:
+        return _EXECUTOR_PROVEDOR.submit(contextvars.copy_context().run, _chamar_provedor, fornecedor, b, c, m,
+                                      instrucao, entrada, max_tokens, timeout)
+
+    atraso = ATRASO_RESERVA_S + ATRASO_POR_MIL_CARACTERES_S * (len(instrucao) + len(entrada)) / 1000
+    pendentes = {lancar("deepseek", base, chave, modelo)}
+    reserva_lancada = False
+    limite = time.monotonic() + timeout
+    ultimo_erro: Exception | None = None
+    while pendentes:
+        espera = limite - time.monotonic()
+        if espera <= 0:
+            break
+        prazo = min(espera, atraso) if not reserva_lancada else espera
+        prontos, pendentes = futures_wait(pendentes, timeout=prazo, return_when=FIRST_COMPLETED)
+        for futuro in prontos:
+            try:
+                return futuro.result()
+            except Exception as erro:  # noqa: BLE001
+                ultimo_erro = erro
+        if not reserva_lancada and (not prontos or not pendentes):
+            reserva_lancada = True
+            log.warning("petição local: DeepSeek lento ou com erro (%s); chamando a OpenAI em paralelo", ultimo_erro or "sem resposta")
+            pendentes.add(lancar("openai", reserva[0], reserva[1], MODELO_RESERVA))
+    for futuro in pendentes:
+        futuro.cancel()
+    raise ultimo_erro or httpx.ReadTimeout("nenhum provedor respondeu a tempo")
+
+
 def _llm_json(
     instrucao: str, entrada: str, *, timeout: float = 180.0, modelo: str | None = None,
-    repetir_apos_timeout: bool = True,
+    repetir_apos_timeout: bool = True, max_tokens: int | None = None,
 ) -> dict[str, Any]:
+    # Homologação e contingência: permite usar OpenAI como provedor primário,
+    # sem iniciar nem aguardar uma chamada DeepSeek degradada.
+    if os.getenv("PETICAO_FORNECEDOR", "").strip().lower() == "openai":
+        reserva = _reserva_configurada()
+        if reserva is None:
+            raise ErroPeticao("OPENAI_API_KEY ausente — não é possível usar OpenAI como provedor primário.")
+        base_openai, chave_openai = reserva
+        modelo_openai = modelo or os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
+        escolha = _chamar_provedor("openai", base_openai, chave_openai, modelo_openai,
+                                   instrucao, entrada, max_tokens, timeout)
+        conteudo = escolha["message"]["content"]
+        try:
+            return json.loads(conteudo)
+        except json.JSONDecodeError as erro:
+            raise ErroPeticao("OpenAI retornou JSON inválido.") from erro
     chave = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not chave:
         raise ErroPeticao("DEEPSEEK_API_KEY ausente — configure no .env.")
     base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    reserva_permitida = modelo is None
     modelo = modelo or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     # Duas tentativas, não uma: um pedido grande — criar um tópico novo reescreve
     # a peça inteira — já leva dezenas de segundos, e um timeout de rede isolado
@@ -943,25 +1072,8 @@ def _llm_json(
     for tentativa in (1, 2):
         inicio_chamada = time.monotonic()
         try:
-            resposta = httpx.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {chave}"},
-                json={
-                    "model": modelo,
-                    "temperature": 0.2,
-                    "max_tokens": MAX_TOKENS_RESPOSTA,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": instrucao},
-                        {"role": "user", "content": entrada[:120_000]},
-                    ],
-                },
-                timeout=timeout,
-            )
-            resposta.raise_for_status()
-            custos_api.registrar("deepseek", modelo, "geracao_peticao", resposta,
-                                 latencia_ms=round((time.monotonic() - inicio_chamada) * 1000))
-            escolha = resposta.json()["choices"][0]
+            escolha = _escolha_com_reserva(base, chave, modelo, instrucao, entrada, max_tokens, timeout,
+                                           reserva_permitida=reserva_permitida)
             conteudo = escolha["message"]["content"]
             if escolha.get("finish_reason") == "length":
                 # Cortado pelo teto de saída: o JSON chega sem fechar. Dizer "não
@@ -2076,7 +2188,10 @@ def _outline_juridico(contexto: str, caso_id: str = "") -> dict[str, Any] | None
     try:
         if caso_id:
             instrucao = _com_skill_do_escritorio(caso_id, instrucao)
-        plano = _llm_json(instrucao, contexto[:60_000], timeout=180.0, repetir_apos_timeout=False)
+        plano = _com_prazo_total(
+            lambda: _llm_json(instrucao, contexto[:60_000], timeout=90.0, repetir_apos_timeout=False,
+                              max_tokens=MAX_TOKENS_PLANO),
+            PRAZO_PLANO_S)
     except Exception as erro:  # noqa: BLE001 - roteiro é reforço, não pode travar a redação
         log.warning("petição local: outline jurídico indisponível na redação: %s", erro)
         return None
@@ -2211,7 +2326,7 @@ def _conferir_contra_os_autos(
     material: str = "",
     corrigir: bool = True,
 ) -> tuple[list[dict[str, Any]], list[Any], dict[str, Any]]:
-    """Confere a peça contra os autos e, se `corrigir`, pede UMA rodada de correção.
+    """Confere a peça contra os autos e corrige cada achado corrigível.
 
     Devolve as seções (corrigidas e com as citações não verificadas carimbadas), as
     violações que SOBRARAM e o registro do que aconteceu, para o trace da geração.
@@ -2226,16 +2341,15 @@ def _conferir_contra_os_autos(
     corrigiu = False
     rodadas = 0
     secoes_puladas: list[str] = []
-    # UMA rodada, seções EM PARALELO: era aqui que a geração passava mais tempo ("Conferindo a peça contra os
-    # autos…") — duas rodadas, uma seção por vez, cada chamada com o material inteiro. O que sobrar é revisto
-    # pelo auditor final, que roda de novo a mesma conferência logo adiante.
-    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < 1 and not _sem_tempo(folga_s=180):
+    # Um gate não pode ser parcial: deixar VALUE ou CLAIMS fora da correção por
+    # limite de conveniência foi exatamente o que permitiu valores incompatíveis
+    # chegarem à minuta. Cada rodada trata todas as seções afetadas, em lotes
+    # pequenos para não sobrecarregar o provedor; o resultado é sempre conferido
+    # de novo antes de avançar.
+    max_rodadas = int(os.getenv("PETICAO_CONFERENCIA_MAX_RODADAS", "3"))
+    tamanho_lote = int(os.getenv("PETICAO_CONFERENCIA_LOTE_SECOES", "3"))
+    while corrigir and any(v.bloqueia for v in violacoes) and rodadas < max_rodadas and not _sem_tempo(folga_s=120):
         rodadas += 1
-        # A primeira conferência é determinística e sempre roda. A reescrita por
-        # modelo é uma tentativa de conveniência, não pode transformar uma peça
-        # já gerada em uma espera de vários minutos (nem em falha por sobrecarga
-        # do provedor). Dois blocos cobrem os erros de maior impacto sem mandar a
-        # mesma base de 80 mil caracteres para seis chamadas simultâneas.
         por_secao = {
             str(secao.get("code") or ""): [v for v in violacoes if v.bloqueia and v.secao == secao.get("code")]
             for secao in secoes
@@ -2247,29 +2361,25 @@ def _conferir_contra_os_autos(
                 -len(por_secao[str(s.get("code") or "")]),
             )
         )
-        alvos = alvos[:2]
-        secoes_puladas = [
-            str(s.get("code") or "") for s in secoes
-            if por_secao.get(str(s.get("code") or "")) and s not in alvos
-        ]
-        extra = _material_para_resolver_pesquisas(violacoes, alvos)
+        secoes_puladas = []
+        novas_por_codigo: dict[str, dict[str, Any]] = {}
+        for inicio in range(0, len(alvos), max(1, tamanho_lote)):
+            lote = alvos[inicio:inicio + max(1, tamanho_lote)]
+            extra = _material_para_resolver_pesquisas(violacoes, lote)
 
-        def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
-            da_secao = por_secao.get(str(secao.get("code") or ""), [])
-            if not da_secao:
-                return secao
-            novo = _reescrever_secao(
-                caso_id,
-                secao,
-                conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
-                material[:35_000],
-            )
-            return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
+            def corrigir_secao(secao: dict[str, Any]) -> dict[str, Any]:
+                da_secao = por_secao.get(str(secao.get("code") or ""), [])
+                novo = _reescrever_secao(
+                    caso_id, secao,
+                    conferencia_peticao.instrucao_de_correcao(da_secao, fontes) + extra,
+                    material[:35_000],
+                )
+                return {**secao, "content": novo} if novo and novo != secao.get("content") else secao
 
-        novas_por_codigo = {
-            str(secao.get("code") or ""): corrigida
-            for secao, corrigida in zip(alvos, _em_paralelo_com_contexto(corrigir_secao, alvos, max_workers=2))
-        }
+            novas_por_codigo.update({
+                str(secao.get("code") or ""): corrigida
+                for secao, corrigida in zip(lote, _em_paralelo_com_contexto(corrigir_secao, lote, max_workers=len(lote)))
+            })
         novas = [novas_por_codigo.get(str(secao.get("code") or ""), secao) for secao in secoes]
         if novas == secoes:
             break
@@ -2762,6 +2872,10 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "_funcoes_de_conteudo": {},
     }
     plano_est, texto_plano = _tentar_etapa("plano estruturado", _montar_plano, (plano_vazio, ""), diag)
+    # A data é uma entrada de geração, não uma decisão do redator. Ela acompanha
+    # o plano até o higienizador final para nenhuma etapa trocar o fechamento por
+    # `date.today()` de outro processo/dia.
+    plano_est["petition_date"] = data_da_peticao.isoformat()
     if texto_plano:
         outline += "\n\n" + texto_plano
     # CAMADA JURÍDICA (PETICAO_PIPELINE_JURIDICO_MODE): issue spotting sobre o catálogo inteiro da skill.
@@ -2790,11 +2904,16 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         plano_para_consultas, contexto, nome_categoria, consulta_fixa_legada=not estrito)
     _diag("plano", ok=bool(plano), n=len((plano or {}).get("teses") or []),
           teses=[c["tese"] for c in consultas[1:]])
+    # Pesquisa externa é lenta. Dispara antes das recuperações locais e da
+    # redação para que ela use todo esse tempo em paralelo. Achados novos nunca
+    # entram como citação automática: continuam sujeitos ao Citation Gate.
+    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(
+        plano_est, plano_para_consultas, data_da_peticao
+    )
     avancar_etapa("Buscando precedentes, legislação e modelos por tese…", 30)
     uf_jurisprudencia = _uf_jurisprudencia_do_caso(caso_id, contexto)
     precedentes = _precedentes_para_redigir(contexto, consultas, uf=uf_jurisprudencia)
     legislacao = _legislacao_para_redigir(contexto, consultas)
-    atualizacao_futura, bloco_atualizacao = _iniciar_atualizacao_juridica(plano_est, plano, data_da_peticao)
     _TEXTO_DO_CASO.set(contexto[:20_000])
     padroes, referencias_acervo = _padroes_conteudisticos_para_redigir(
         contexto, categoria_nome=nome_categoria, categoria_codigo=codigo_categoria, consultas=consultas
@@ -2976,6 +3095,22 @@ Cada content deve conter parágrafos separados por linha em branco."""
         )
         + "\nUse somente esses papéis, nessa ordem, cada um UMA vez e com conteúdo próprio. PRELIMINARY é obrigatória e deve trazer a gratuidade quando houver declaração/elemento de hipossuficiência. Preserve a marcação visual exigida pela skill (# para capítulo, > para citação curta verificável, ::: para blocos centralizados). Análise, lacunas, alertas e pendências são metadados internos e nunca podem aparecer no content das seções."
     )
+    instrucao_base += (
+        "\n\n=== FONTE CANONICA OBRIGATORIA ===\n"
+        "O PETITION_PLAN fornecido na entrada e a unica fonte para datas, valores, "
+        "percentuais e fatos no corpo. Nao complete cronologia por inferencia. "
+        "Em FACTS, so escreva uma data se ela estiver identificada no plano com fonte; "
+        "caso contrario, omita o marco e registre a lacuna apenas em pendencias. "
+        "Nao escreva valores monetarios em CLAIMS ou VALUE: o renderer os substitui "
+        "pelos objetos de calculo e pelo valor da causa canonicos."
+        "\n\n=== PADRAO DE RACIOCINIO FORENSE ===\n"
+        "Para cada tese aproveitada, conecte fato documental especifico -> regra ou precedente verificado -> "
+        "consequencia juridica -> pedido correspondente. Antecipe a defesa previsivel apenas quando os autos "
+        "derem base e responda com prova ou regra aplicavel; nao crie uma controversia artificial. Diferencie "
+        "o que esta provado, o que e alegacao e o que depende de pericia. Prefira uma fundamentacao precisa "
+        "e aderente aos fatos a uma lista de artigos ou julgados. Toda citacao deve explicar, em linguagem "
+        "propria, por que a sua razao de decidir alcanca este caso."
+    )
     if estrito and prep_juridico:
         instrucao_base += _CONTRATO_JURIDICO
     instrucao = _com_skill_do_escritorio(caso_id, instrucao_base)
@@ -2991,7 +3126,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     # prompt genérico. Isso tem de constar da peça, não só do log.
     insumos["orientacao_do_escritorio"] = instrucao != instrucao_base
     avancar_etapa("Redigindo a petição — esta é a etapa mais demorada…", 35)
-    entrada_redacao = contexto
+    entrada_redacao = plano_da_peticao.para_prompt(plano_est) + "\n\n" + contexto
     if estrito and prep_juridico:
         # Plano, base jurídica e regras PRIMEIRO; o corte de tamanho cai no fim do material do caso, nunca no plano.
         extras = contexto[tamanho_caso + len(precedentes) + len(legislacao) + len(padroes) + len(outline):]
@@ -3235,8 +3370,17 @@ Cada content deve conter parágrafos separados por linha em branco."""
         "jurimetria": jurimetria,
         "sections": secoes,
         "readiness": {
-            "ready": not (auditoria_estrutural.pendencias(secoes) or pipeline.get("documento_final", {}).get("pendencias_humanas")),
+            # Uma minuta com qualquer violação factual, cálculo sem origem ou
+            # total divergente jamais é elegível a protocolo, inclusive no fluxo
+            # legado. Antes, essas falhas ficavam só em `review.findings` e a
+            # prontidão podia permanecer verdadeira.
+            "ready": not (
+                any(v.bloqueia for v in violacoes)
+                or auditoria_estrutural.pendencias(secoes)
+                or pipeline.get("documento_final", {}).get("pendencias_humanas")
+            ),
             "blocking_issues": [
+                *(f"[{v.codigo}] {v.motivo}"[:200] for v in violacoes if v.bloqueia),
                 *(f"[PENDENTE] no texto ({c}): {m}"[:200] for c, m in auditoria_estrutural.pendencias(secoes)),
                 *((pipeline.get("documento_final") or {}).get("pendencias_humanas") or []),
             ],
@@ -3323,7 +3467,10 @@ def _analise_juridica(caso_id: str, plano_est: dict[str, Any], contexto: str, te
     fontes.append({"tipo": "entrevista", "nome": "entrevista", "texto": texto_entrevista or ""})
     modelo = juridico.modelo_raciocinio() or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     return juridico_orq.analisar(
-        plano_est=plano_est, contexto_caso=contexto, fontes=fontes, llm=_llm_raciocinio(300.0),
+        # A matriz de fontes vai separada e completa; limitar o resumo evita que
+        # uma única chamada de issue-spotting com >120 mil caracteres expire antes
+        # de qualquer auditoria rodar.
+        plano_est=plano_est, contexto_caso=contexto[:80_000], fontes=fontes, llm=_llm_raciocinio(300.0),
         textos_skill=juridico_teses.textos_da_skill_ativa(), modelo=modelo, data_referencia=data_da_peticao,
         llm_contrateses=_llm_raciocinio(180.0) if _ligado("PETICAO_MOTOR_CONTRATESES_LLM") else None, modelo_contrateses=modelo,
     )

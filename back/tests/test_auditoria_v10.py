@@ -113,6 +113,7 @@ def test_4_5_subsidiario_nao_entra_na_soma_e_valor_da_causa_e_conferido():
     errado = secoes("x", "Dá-se à causa o valor de R$ 10.500,00.", codigos=["HEADING", "CLAIMS"])
     certo = secoes("x", "Dá-se à causa o valor de R$ 10.000,00.", codigos=["HEADING", "CLAIMS"])
     assert "VALOR_DA_CAUSA_NAO_FECHA" in codigos(ae.valor_da_causa(errado, pl)) and not ae.valor_da_causa(certo, pl)
+    assert "VALOR_DA_CAUSA_AUSENTE" in codigos(ae.valor_da_causa(secoes("x", codigos=["HEADING"]), pl))
     somado = [{**p, "incluido_no_valor_da_causa": p["natureza"] == "subsidiario"} for p in peds]
     assert "SUBSIDIARIO_SOMADO_AO_PRINCIPAL" in codigos(ae.ledger(plano(somado)))
 

@@ -31,6 +31,7 @@ acrescentaria o risco de deixar de fora justamente o trecho que ninguém procuro
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -573,8 +574,23 @@ def analisar(caso_id: str) -> dict[str, Any]:
     é o `atualizado_em` do caso, que `_tocar_caso` bumpa a cada nova entrega ou
     entrevista — documento novo invalida sozinho; nada muda, reaproveita.
     """
-    caso = armazenamento.obter_caso(caso_id) or {}
-    return _analisar_cacheado(caso_id, str(caso.get("atualizado_em") or ""))
+    from .agente import contexto_caso
+
+    documentos = _documentos_do_caso(caso_id)
+    assinatura = _assinatura_dos_textos(documentos, _fatos_conhecidos(caso_id))
+    guardada = contexto_caso.analise_guardada(caso_id, assinatura) if documentos else None
+    if guardada is not None:
+        return {**guardada, "reaproveitada": True}
+    resultado = _analisar_cacheado(caso_id, assinatura)
+    if documentos and not resultado.get("aviso"):
+        contexto_caso.guardar_analise(caso_id, assinatura, resultado)
+    return resultado
+
+
+def _assinatura_dos_textos(documentos: list[dict[str, str]], fatos: list[str]) -> str:
+    """Muda só quando um texto lido ou uma resposta da entrevista entra ou muda — não por qualquer toque no caso."""
+    partes = sorted((d["id"], hashlib.sha1(d["texto"].encode("utf-8")).hexdigest()) for d in documentos)
+    return hashlib.sha1(json.dumps([partes, sorted(fatos)]).encode("utf-8")).hexdigest()
 
 
 def relatorio_global(caso_id: str) -> dict[str, Any]:
