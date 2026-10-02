@@ -2872,6 +2872,10 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         "_funcoes_de_conteudo": {},
     }
     plano_est, texto_plano = _tentar_etapa("plano estruturado", _montar_plano, (plano_vazio, ""), diag)
+    # A data é uma entrada de geração, não uma decisão do redator. Ela acompanha
+    # o plano até o higienizador final para nenhuma etapa trocar o fechamento por
+    # `date.today()` de outro processo/dia.
+    plano_est["petition_date"] = data_da_peticao.isoformat()
     if texto_plano:
         outline += "\n\n" + texto_plano
     # CAMADA JURÍDICA (PETICAO_PIPELINE_JURIDICO_MODE): issue spotting sobre o catálogo inteiro da skill.

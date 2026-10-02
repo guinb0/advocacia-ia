@@ -659,7 +659,11 @@ def higienizar(
     # Invariantes resolvidas por código, DEPOIS de qualquer alinhamento de valor: o extenso deriva do número final.
     secoes, rel["extensos_regerados"] = inv.sincronizar_extenso(secoes)
     secoes, rel["digitos_verificadores_corrigidos"] = inv.corrigir_digitos_verificadores(secoes)
-    secoes, rel["data_do_fecho_preenchida"] = inv.preencher_data_do_fecho(secoes, date.today())
+    try:
+        data_do_plano = date.fromisoformat(str(plano.get("petition_date") or ""))
+    except ValueError:
+        data_do_plano = date.today()
+    secoes, rel["data_do_fecho_preenchida"] = inv.preencher_data_do_fecho(secoes, data_do_plano)
     secoes, rel["letras_duplicadas_removidas"] = inv.sem_letra_duplicada(secoes)
     secoes, rel["nb_normalizados"] = inv.normalizar_nb(secoes)
     secoes, rel["andaimes_internos_removidos"] = inv.sem_andaimes_internos(secoes)

@@ -51,9 +51,12 @@ def secao_pedidos(plano: dict[str, Any], *, introducao: str = "Diante do exposto
         linha = objeto[:1].lower() + objeto[1:] if len(objeto) > 1 and objeto[1].islower() else objeto
         if p.get("value") not in (None, "") or p.get("valor") not in (None, ""):
             valor = p.get("value") if p.get("value") not in (None, "") else p.get("valor")
+            # Pedido financeiro sem cálculo não pode virar valor arbitrário no
+            # documento final. A pendência já fica registrada no plano/auditoria.
+            if not p.get("calculation_id"):
+                continue
             linha += f", no valor de {calc.brl(calc.valor_numerico(valor) or 0)}"
-            if p.get("calculation_id"):
-                linha += f" (memória de cálculo {p['calculation_id']})"
+            linha += f" (memória de cálculo {p['calculation_id']})"
         if p.get("reflexes"):
             linha += ", com reflexos em " + ", ".join(p["reflexes"])
         itens.append(linha)

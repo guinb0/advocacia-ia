@@ -31,7 +31,8 @@ _CONCLUSIVO = re.compile(r"\bcomprova(?:m|do|da|dos|das)?\b|prova\s+cabal|restou
 _SO_PERICIA = re.compile(
     r"incapacidade\s+(?:laborativa\s+)?(?:total|permanente|definitiva|irrevers[íi]vel)|"
     r"nexo\s+(?:causal|concausal|t[ée]cnico)[^.;]{0,40}(?:est[áa]|restou|foi|resta)\s+(?:comprovad|demonstrad|configurad|evidenciad)|"
-    r"doen[çc]a\s+ocupacional\s+(?:comprovad|confirmad|configurad)|(?:sequelas?|les[ãa]o)\s+(?:permanentes?|irrevers[íi]ve(?:l|is))", re.I)
+    r"doen[çc]a\s+ocupacional\s+(?:comprovad|confirmad|configurad)|(?:sequelas?|les[ãa]o)\s+(?:permanentes?|irrevers[íi]ve(?:l|is))|"
+    r"redu[cç][ãa]o\s+(?:da\s+capacidade\s+)?(?:laborativa\s+)?permanente|permanece\s+com\s+sequelas?", re.I)
 
 
 def _frases(texto: str) -> list[str]:

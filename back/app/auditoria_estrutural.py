@@ -305,7 +305,7 @@ def ledger(plano: dict[str, Any]) -> list[Violacao]:
     tese_ids = {p["tese_origem"] for p in peds}
     for t in plano.get("teses") or []:
         if t.get("gera_pedido", True) and t.get("consequencia") and t["id"] not in tese_ids:
-            saida.append(_v("TESE_SEM_PEDIDO", "CLAIMS", f"{t['id']} {t['titulo'][:50]}", f"A tese {t['id']} tem consequência jurídica mas nenhum pedido correspondente.", "Registre o pedido no ledger ou marque a tese como sem pedido.", False))
+            saida.append(_v("TESE_SEM_PEDIDO", "CLAIMS", f"{t['id']} {t['titulo'][:50]}", f"A tese {t['id']} tem consequência jurídica mas nenhum pedido correspondente.", "Registre o pedido no ledger ou marque a tese como sem pedido."))
     return saida
 
 

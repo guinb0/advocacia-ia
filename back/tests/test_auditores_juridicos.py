@@ -58,6 +58,15 @@ def test_pedido_divergente_do_calculo_e_calculo_inexistente_bloqueiam():
     assert auditores.auditar_calculos(ok, certo, calcs)["achados"] == []
 
 
+def test_pedido_monetario_sem_calculation_id_ou_valor_bloqueia():
+    pedidos = [
+        {"id": "P01", "tipo": "Danos morais", "objeto": "indenização por danos morais", "valor": 5000.0},
+        {"id": "P02", "tipo": "FGTS", "objeto": "pagamento de FGTS", "valor": None},
+    ]
+    codigos = _codigos(auditores.auditar_calculos([], pedidos, []))
+    assert {"PEDIDO_MONETARIO_SEM_CALCULO", "PEDIDO_MONETARIO_SEM_VALOR"} <= set(codigos)
+
+
 # ------------------------------------------------------------------ soma = valor da causa, sem dupla contagem
 
 def test_valor_da_causa_soma_so_os_autonomos_cumulativos_sem_dupla_contagem():
@@ -109,6 +118,12 @@ def test_fato_futuro_e_data_de_modelo_no_fechamento():
     assert auditor_temporal.auditar([{"code": "CLOSING", "content": corrigido}], petition_date=HOJE)["achados"] == []
 
 
+def test_data_de_decisao_documental_posterior_nunca_e_projecao():
+    secoes = [{"code": "FACTS", "content": "A partir da decisão do INSS de 14/07/2026, reconheceu-se o nexo."}]
+    codigos = _codigos(auditor_temporal.auditar(secoes, petition_date=date(2026, 6, 29)))
+    assert "DATA_POSTERIOR_A_PETICAO" in codigos
+
+
 # ------------------------------------------------------------------ contradição semântica
 
 def test_contradicao_semantica_familia_ressalva_e_camada_llm_com_trecho_literal():
@@ -137,6 +152,20 @@ def test_base_salarial_do_calculo_diferente_da_canonica_bloqueia():
     secoes = [{"code": "FACTS", "content": "O reclamante recebia salário de R$ 3.000,00."}]
     rel = auditor_semantico.auditar(secoes, canon=canon, calculos=calcs, matriz=_matriz())
     assert _codigos(rel) == ["BASE_SALARIAL_DIVERGENTE"]
+
+
+def test_afirmacao_numerica_impossivel_bloqueia():
+    secoes = [{"code": "PRELIMINARY", "content": "A remuneração bruta de R$ 6.121,61 é inferior ao parâmetro de R$ 5.000,00."}]
+    assert "ALEGACAO_NUMERICA_FALSA" in _codigos(auditor_semantico.auditar(secoes))
+
+
+def test_sequela_permanente_categorica_com_pericia_pendente_bloqueia():
+    from app.juridico import auditor_certeza
+    secoes = [
+        {"code": "FACTS", "content": "O autor permanece com sequelas permanentes."},
+        {"code": "CLAIMS", "content": "Requer perícia médica para apurar a incapacidade."},
+    ]
+    assert "AFIRMACAO_QUE_DEPENDE_DE_PERICIA" in _codigos(auditor_certeza.auditar(secoes, canon=None, exige_pericia=True))
 
 
 # ------------------------------------------------------------------ e2e: caso trabalhista fictício (acidente, pensionamento, verbas, perícia)

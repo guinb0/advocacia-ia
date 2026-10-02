@@ -360,19 +360,29 @@ def renderizar_pedidos(plano: dict[str, Any], redigir: Callable[[list[dict[str, 
     for p in todos:
         if p.get("tipo_de_item") in ("agravante", "criterio_de_quantificacao", "consequencia") and p.get("agrava_id"):
             fatores.setdefault(p["agrava_id"], []).append(p["objeto"] or p["tipo"])
+    # A lista pode receber uma sugestão de abertura/fecho do modelo, mas NUNCA a
+    # redação de cada alínea. Era essa segunda fonte que deixava entrar TEPT,
+    # valores e consequências que não existiam no PETITION_PLAN.
     saida = redigir([{**p, "fatores_de_quantificacao": fatores.get(p["id"], [])} for p in pedidos]) or {}
-    itens = saida.get("itens") if isinstance(saida.get("itens"), dict) else {}
     linhas = []
     faltou = []
     for n, p in enumerate(pedidos):
-        texto = str(itens.get(p["id"]) or "").strip().rstrip(";.")
-        if not texto:
-            faltou.append(p["id"])
-            texto = f"{p['objeto'] or p['tipo']}" + (f" ({p['valor_ou_base']})" if p["valor_ou_base"] else "")
+        # Fonte única: a consequência aprovada no ledger. Não interpolar texto
+        # livre aqui; fatos clínicos, danos e fundamentos pertencem ao plano.
+        texto = f"{p['objeto'] or p['tipo']}".strip().rstrip(";.")
+        if p.get("valor_ou_base"):
+            texto += f" ({p['valor_ou_base']})"
         letra = "abcdefghijklmnopqrstuvwxyz"[n] if n < 26 else f"{n + 1}"
         linhas.append(f"{letra}) {texto}{';' if n < len(pedidos) - 1 else '.'}")
     abertura = str(saida.get("abertura") or "").strip()
-    fecho = str(saida.get("fecho") or "").strip()
+    # Um fecho longo também podia reintroduzir pedido livre. Só a abertura
+    # curta, sem valores/listas, é aproveitada; o restante é estrutural.
+    if len(abertura) > 400 or re.search(r"R\$|\n\s*[a-z]\)", abertura, re.I):
+        abertura = ""
+    # Fecho processual padronizado, também sem texto livre do modelo. Não cria
+    # tese nem pedido econômico e mantém a lista formalmente completa.
+    fecho = ("Requer, por fim, a citação da reclamada, o regular processamento pelo rito cabível, "
+             "a intimação exclusiva em nome do advogado constituído, as comunicações processuais e a procedência dos pedidos.")
     memoria = memoria_de_calculo(pedidos)
     texto = "\n\n".join(x for x in (abertura, "\n\n".join(linhas), fecho, memoria) if x)
     return texto, {"pedidos_renderizados": [p["id"] for p in pedidos], "sem_redacao_do_modelo": faltou,
