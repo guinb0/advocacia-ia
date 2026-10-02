@@ -148,7 +148,7 @@ function FormularioAgendamento({
   onCancelar,
 }: {
   inicial: Formulario;
-  onSalvo: () => void;
+  onSalvo: (atendimento: Atendimento) => void;
   onCancelar: () => void;
 }) {
   const [f, setF] = useState(inicial);
@@ -172,7 +172,7 @@ function FormularioAgendamento({
     setSalvando(true);
     try {
       if (f.id) {
-        await editarAtendimento(f.id, {
+        const atualizado = await editarAtendimento(f.id, {
           versao: f.versao,
           cliente: f.cliente.trim(),
           telefone: f.telefone,
@@ -180,8 +180,9 @@ function FormularioAgendamento({
           observacao: f.observacao,
           ...(lembretes ? { lembretes } : { usar_lembretes_padrao: true }),
         });
+        onSalvo(atualizado);
       } else {
-        await agendarAtendimento({
+        const criado = await agendarAtendimento({
           cliente: f.cliente.trim(),
           telefone: f.telefone,
           data_hora: quando.toISOString(),
@@ -190,8 +191,8 @@ function FormularioAgendamento({
           lembretes,
           enviar_confirmacao: f.enviarConfirmacao,
         });
+        onSalvo(criado);
       }
-      onSalvo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Não foi possível salvar o agendamento.");
     } finally {
@@ -322,6 +323,7 @@ export default function Agenda({
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [formulario, setFormulario] = useState<Formulario | null>(null);
+  const [novoComLink, setNovoComLink] = useState<Atendimento | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
@@ -415,9 +417,16 @@ export default function Agenda({
           key={formulario.id ?? "novo"}
           inicial={formulario}
           onCancelar={() => setFormulario(null)}
-          onSalvo={() => {
+          onSalvo={(atendimento) => {
             setFormulario(null);
-            setAviso("Agendamento salvo.");
+            if (!atendimento.id || formulario.id) {
+              setAviso("Agendamento salvo.");
+            } else if (atendimento.link_cliente) {
+              setNovoComLink(atendimento);
+              setAviso("Agendamento criado. O link da chamada já está pronto para enviar ao cliente.");
+            } else {
+              setAviso("Agendamento criado.");
+            }
             void carregar();
           }}
         />
@@ -432,6 +441,20 @@ export default function Agenda({
         <div className="mb-3">
           <Aviso tom="ok">{aviso}</Aviso>
         </div>
+      )}
+      {novoComLink?.link_cliente && (
+        <section className="mb-4 rounded-cartao border border-acao-borda bg-acao-clara p-4 shadow-cartao" aria-live="polite">
+          <p className="m-0 text-sm font-semibold text-tinta">Link da chamada de {novoComLink.cliente}</p>
+          <p className="mt-1 break-all text-sm text-tinta-2">{novoComLink.link_cliente}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Botao variante="primario" pequeno onClick={() => copiar(novoComLink.link_cliente!)}>
+              <Copy aria-hidden className="size-3" /> Copiar link para o cliente
+            </Botao>
+            <Botao variante="discreto" pequeno onClick={() => setNovoComLink(null)}>
+              Fechar
+            </Botao>
+          </div>
+        </section>
       )}
 
       {carregando && itens.length === 0 ? (
