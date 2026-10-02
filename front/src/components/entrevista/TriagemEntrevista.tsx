@@ -958,7 +958,7 @@ export default function TriagemEntrevista({
 
       {/* O áudio do que acabou de ser conduzido, antes do contrato: quem sai da
         * entrevista costuma querer conferir uma fala antes de seguir. */}
-      {!mostrarRoteiro && audioEntrevista && (
+      {!fluxoV2 && !mostrarRoteiro && audioEntrevista && (
         <AudioDaEntrevista entrevistaId={audioEntrevista} />
       )}
 

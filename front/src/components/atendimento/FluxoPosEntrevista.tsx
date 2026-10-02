@@ -247,12 +247,12 @@ export default function FluxoPosEntrevista({
     }
   }
 
-  const confirmarAcoes = (acoes: AcaoConfirmada[], documentos: string[]) =>
+  const confirmarAcoes = (acoes: AcaoConfirmada[], nomeCliente: string) =>
     void executar(async () => {
       const r = await confirmarAcoesAtendimento(atendimentoId, {
         acoes,
-        documentos_declarados: documentos,
-        cliente,
+        documentos_declarados: [],
+        cliente: nomeCliente || cliente,
         telefone: telefoneInicial,
       });
       const novos = Object.fromEntries(r.casos.filter((c) => c.portal).map((c) => [c.id, c.portal]));
@@ -339,6 +339,7 @@ export default function FluxoPosEntrevista({
           key={analise?.id ?? "sem-analise"}
           analise={analise}
           categorias={categorias}
+          clienteInicial={cliente}
           confirmando={ocupado}
           onConfirmar={confirmarAcoes}
           onRefazer={() => void comecarAnalise(true)}

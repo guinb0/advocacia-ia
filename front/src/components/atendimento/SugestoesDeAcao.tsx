@@ -99,17 +99,16 @@ function Marcador({
 interface Props {
   analise: AnaliseAtendimento | null;
   categorias: Categoria[];
-  /** Documentos que a entrevista já declarou (o cliente disse que tem). */
-  documentosIniciais?: string[];
+  clienteInicial?: string;
   confirmando: boolean;
-  onConfirmar: (acoes: AcaoConfirmada[], documentosDeclarados: string[]) => void;
+  onConfirmar: (acoes: AcaoConfirmada[], cliente: string) => void;
   onRefazer?: () => void;
 }
 
 export default function SugestoesDeAcao({
   analise,
   categorias,
-  documentosIniciais = [],
+  clienteInicial = "",
   confirmando,
   onConfirmar,
   onRefazer,
@@ -123,8 +122,7 @@ export default function SugestoesDeAcao({
   );
   const [manuais, setManuais] = useState<{ codigo: string; nome: string }[]>([]);
   const [escolhaManual, setEscolhaManual] = useState("");
-  const [documentos, setDocumentos] = useState<string[]>(documentosIniciais);
-  const [novoDocumento, setNovoDocumento] = useState("");
+  const [cliente, setCliente] = useState(clienteInicial);
 
   const alternar = (chave: string) =>
     setMarcadas((atual) => {
@@ -158,7 +156,7 @@ export default function SugestoesDeAcao({
           ? { nome: e.nova.nome, origem: "ia", nova: e.nova }
           : { codigo: e.codigo, nome: e.nome, origem: "manual" },
     );
-    onConfirmar(acoes, documentos);
+    onConfirmar(acoes, cliente.trim());
   };
 
   const adicionarManual = () => {
@@ -166,13 +164,6 @@ export default function SugestoesDeAcao({
     if (!categoria || codigosUsados.has(categoria.codigo)) return;
     setManuais((atual) => [...atual, { codigo: categoria.codigo, nome: categoria.nome }]);
     setEscolhaManual("");
-  };
-
-  const adicionarDocumento = () => {
-    const nome = novoDocumento.trim();
-    if (!nome || documentos.some((d) => d.toLowerCase() === nome.toLowerCase())) return;
-    setDocumentos((atual) => [...atual, nome]);
-    setNovoDocumento("");
   };
 
   return (
@@ -306,50 +297,22 @@ export default function SugestoesDeAcao({
         </div>
 
         <div className="rounded-campo border border-borda bg-papel px-4 py-3">
-          <RotuloCampo htmlFor="documento-declarado">Documentos que o cliente já tem</RotuloCampo>
-          <p className="m-0 text-[11px] text-tinta-3">Entram como disponíveis no resumo da Documentação.</p>
-          <div className="mt-1 flex flex-wrap gap-2">
-            <Campo
-              id="documento-declarado"
-              className="min-w-[240px] flex-1"
-              value={novoDocumento}
-              placeholder="Ex.: CNH, CTPS, laudo médico"
-              onChange={(e) => setNovoDocumento(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  adicionarDocumento();
-                }
-              }}
-            />
-            <Botao variante="secundario" onClick={adicionarDocumento} disabled={!novoDocumento.trim()}>
-              Incluir
-            </Botao>
-          </div>
-          {documentos.length > 0 && (
-            <ul className="m-0 mt-2 flex list-none flex-wrap gap-2 p-0">
-              {documentos.map((d) => (
-                <li key={d} className="inline-flex items-center gap-1 rounded-pill border border-ok-borda bg-ok-claro px-3 py-1 text-xs font-semibold text-ok">
-                  {d}
-                  <button
-                    type="button"
-                    aria-label={`Remover ${d}`}
-                    className="ml-1 hover:text-critico"
-                    onClick={() => setDocumentos((atual) => atual.filter((x) => x !== d))}
-                  >
-                    <X aria-hidden className="size-3" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <RotuloCampo htmlFor="cliente-do-caso">Nome do cliente</RotuloCampo>
+          <p className="m-0 text-[11px] text-tinta-3">Necessário para criar os casos das ações selecionadas.</p>
+          <Campo
+            id="cliente-do-caso"
+            className="mt-1"
+            value={cliente}
+            placeholder="Nome completo do cliente"
+            onChange={(e) => setCliente(e.target.value)}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-3 border-t border-borda pt-4">
           <Botao
             variante="primario"
             onClick={confirmar}
-            disabled={escolhidas.length === 0 || excedeu}
+            disabled={escolhidas.length === 0 || excedeu || cliente.trim().length < 2}
             carregando={confirmando}
             textoCarregando="Criando caso(s)…"
           >
@@ -365,6 +328,8 @@ export default function SugestoesDeAcao({
               ? `No máximo ${MAXIMO_ACOES} ações por atendimento.`
               : escolhidas.length === 0
                 ? "Marque ao menos uma ação."
+                : cliente.trim().length < 2
+                  ? "Informe o nome do cliente para criar o caso."
                 : escolhidas.map((e) => (e.tipo === "sugestao" ? e.sugestao.nome : e.tipo === "nova" ? e.nova.nome : e.nome)).join(" · ")}
           </span>
         </div>

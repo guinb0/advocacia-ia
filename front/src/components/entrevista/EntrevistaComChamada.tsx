@@ -758,13 +758,13 @@ export default function EntrevistaComChamada({
                     id="acao-finalizar-entrevista"
                     variante="primario"
                     onClick={() => {
-                      if (confirmarDescarteDeSugestoes()) setEtapaFim("escolha");
+                      if (confirmarDescarteDeSugestoes()) seguirParaAnalise(false);
                     }}
                   >
-                    Finalizar entrevista
+                    Finalizar entrevista e ver análise jurídica
                   </BotaoProcesso>
                   <span className={ENCERRAR_NOTA}>
-                    A chamada e a gravação continuam. Em seguida você escolhe revisar ou seguir direto para a análise jurídica.
+                    A análise jurídica aparece na sequência. A gravação só é finalizada no encerramento do atendimento.
                   </span>
                 </>
               ) : (
