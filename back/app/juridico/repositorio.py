@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from typing import Any, Iterable
 
 from . import autoridades as aut
@@ -24,14 +26,28 @@ def _consultar(sql: str, parametros: tuple[Any, ...]) -> list[dict[str, Any]]:
     return rag._consultar_pgvector(sql, parametros, connect_timeout=int(os.getenv("JURIDICO_CONNECT_TIMEOUT", "8")), tentativas_maximas=1)  # noqa: SLF001
 
 
+#: A base verificada muda por curadoria, não a cada petição: cada geração trazia até 20 mil linhas do banco.
+CACHE_AUTORIDADES_S = float(os.getenv("JURIDICO_CACHE_AUTORIDADES_S", "600"))
+_cache_autoridades: dict[str, tuple[float, list[aut.Autoridade]]] = {}
+_trava_cache = threading.Lock()
+
+
 def carregar_autoridades(organization_id: str = "") -> tuple[list[aut.Autoridade], str]:
+    with _trava_cache:
+        guardado = _cache_autoridades.get(organization_id)
+        if guardado and time.monotonic() - guardado[0] < CACHE_AUTORIDADES_S:
+            return list(guardado[1]), ""
     try:
         linhas = _consultar(
             "SELECT * FROM autoridades_juridicas WHERE organization_id IN ('', %s) LIMIT 20000", (organization_id,))
     except Exception as erro:  # noqa: BLE001
         log.warning("juridico: autoridades_juridicas indisponível: %s", erro)
         return [], f"autoridades_juridicas indisponível: {type(erro).__name__}"
-    return aut.de_registro_bruto(linhas), ""
+    base = aut.de_registro_bruto(linhas)
+    if base:
+        with _trava_cache:
+            _cache_autoridades[organization_id] = (time.monotonic(), base)
+    return list(base), ""
 
 
 #: Identificador antigo do ingestor ("art-482-310", "art-482-A-310", "art-1º-1") → número do artigo ("482", "482-a", "1").

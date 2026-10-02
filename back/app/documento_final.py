@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date
 from typing import Any
 
 from . import auditoria_estrutural as ae
 from . import document_ledger, peticao_migracao_legado, petition_linter, plano_da_peticao as pp
+from . import invariantes_numericas as inv
 from .conferencia_peticao import Violacao
 from .recuperacao_por_secao import paragrafos
 
@@ -628,6 +630,16 @@ def higienizar(
     secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], *, texto_dos_autos: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rel: dict[str, Any] = {}
+    if plano.get("_juridico_estrito"):
+        # O render jurídico já inseriu pedidos, valores, tabelas e data. Daqui
+        # em diante só layout; texto jurídico não é apagado nem "consertado".
+        return _renumerar_capitulos([dict(s) for s in secoes]), {
+            "modo": "strict_visual_only", "mutacoes_juridicas_desligadas": True,
+            "metadata_interna_removida": [],
+            "estabilidade": {"modo": "strict", "placeholders_mantidos": sum(
+                len(_PLACEHOLDER_NO_CORPO.findall(str(s.get("content") or ""))) for s in secoes
+            )},
+        }
     secoes = peticao_migracao_legado.migrar_secoes(secoes)
     secoes, metadata = _cortar_metadata(secoes, params)
     rel["metadata_interna_removida"] = metadata
@@ -654,6 +666,17 @@ def higienizar(
         rel["irdr_corrigido_para_irr"] = n_irr
         secoes, rel["estabilidade"] = _estabilizar_o_que_ja_esteve_certo(secoes, soma_definida)
     secoes = [s for s in secoes if str(s.get("content") or "").strip() or str(s.get("label") or "").strip() == ""] or secoes
+    # Invariantes resolvidas por código, DEPOIS de qualquer alinhamento de valor: o extenso deriva do número final.
+    secoes, rel["extensos_regerados"] = inv.sincronizar_extenso(secoes)
+    secoes, rel["digitos_verificadores_corrigidos"] = inv.corrigir_digitos_verificadores(secoes)
+    try:
+        data_do_plano = date.fromisoformat(str(plano.get("petition_date") or ""))
+    except ValueError:
+        data_do_plano = date.today()
+    secoes, rel["data_do_fecho_preenchida"] = inv.preencher_data_do_fecho(secoes, data_do_plano)
+    secoes, rel["letras_duplicadas_removidas"] = inv.sem_letra_duplicada(secoes)
+    secoes, rel["nb_normalizados"] = inv.normalizar_nb(secoes)
+    secoes, rel["andaimes_internos_removidos"] = inv.sem_andaimes_internos(secoes)
     secoes = _renumerar_capitulos(secoes)
     return secoes, rel
 
@@ -740,6 +763,7 @@ def invariantes_estruturais(secoes: list[dict[str, Any]]) -> list[Violacao]:
     esperado = 1
     principais: list[tuple[str, str]] = []
     for s in secoes:
+        numeros_principais_na_secao: set[str] = set()
         for linha in str(s.get("content") or "").splitlines():
             limpa = linha.strip().lstrip("# ").strip("* ")
             sub = re.match(r"^([IVXLC]+)\.(\d+)\.?\s+", limpa)
@@ -752,6 +776,12 @@ def invariantes_estruturais(secoes: list[dict[str, Any]]) -> list[Violacao]:
             main = _TITULO_ROMANO.match(limpa)
             if not main:
                 continue
+            # `representacao_final` pode imprimir o rótulo estrutural e o
+            # conteúdo começar pelo mesmo título. É uma única seção visível,
+            # não dois capítulos consecutivos.
+            if main.group(1) in numeros_principais_na_secao:
+                continue
+            numeros_principais_na_secao.add(main.group(1))
             numero = _de_romano(main.group(1))
             if numero != esperado:
                 saida.append(_v("SEQUENCIA_DE_HEADINGS_INVALIDA", str(s.get("code")), limpa,
@@ -791,6 +821,30 @@ def consistencia_procedimental(secoes: list[dict[str, Any]]) -> list[Violacao]:
     return []
 
 
+def invariantes_numericas_do_documento(final: list[dict[str, Any]]) -> list[Violacao]:
+    """O que impede o PDF: conta que não fecha, sobrevida impossível, identificador escrito de dois jeitos."""
+    saida: list[Violacao] = []
+    inteiro = chr(10).join(str(s.get("content") or "") for s in final)
+    for erro in inv.contas_que_nao_fecham(inteiro):
+        saida.append(_v("CALCULO_ARITMETICO_INCORRETO", "CLAIMS", erro, "A multiplicação da memória de cálculo não dá o resultado informado.",
+                        "Refaça o cálculo com um único fator justificado; o resultado sai do código, não do modelo."))
+    impossivel = inv.sobrevida_impossivel(inteiro)
+    if impossivel:
+        saida.append(_v("SOBREVIDA_INCOMPATIVEL", "CLAIMS", impossivel, "O período de pensionamento ultrapassa a expectativa de vida plausível.",
+                        "Use a sobrevida da tábua do IBGE para a idade do autor e o percentual de redução estimado."))
+    divergentes = inv.identificadores_divergentes(inteiro)
+    if divergentes:
+        saida.append(_v("IDENTIFICADOR_DIVERGENTE", "FACTS", " / ".join(divergentes), "O mesmo benefício aparece com números diferentes na peça.",
+                        "Confira o número no documento de origem e use uma única grafia em toda a peça."))
+    if ae._VINCULO_ATIVO.search(inteiro) and re.search(r"reintegra[çc][ãa]o|indeniza[çc][ãa]o\s+substitutiva", inteiro, re.I):  # noqa: SLF001
+        saida.append(_v("REINTEGRACAO_COM_VINCULO_ATIVO", "CLAIMS", "reintegração/indenização substitutiva", "A peça diz que o vínculo está ativo e pede reintegração ou indenização substitutiva.",
+                        "Com o contrato ativo a estabilidade é pedida só de forma declaratória; retire a reintegração e a indenização substitutiva."))
+    for m in re.finditer(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", inteiro):
+        if not inv.cnpj_valido(m.group(0)):
+            saida.append(_v("CNPJ_INVALIDO", "FACTS", m.group(0), "CNPJ com dígito verificador inválido.", "Confira o CNPJ no documento de origem."))
+    return saida
+
+
 def validar_documento_final(
     secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], ledger: list[dict[str, Any]] | None = None,
 ) -> list[Violacao]:
@@ -824,6 +878,7 @@ def validar_documento_final(
         saida += ae.ausencia_falsa_de_documento_listado(final, ledger)
     saida += pedidos_no_texto(final) + ae.ledger(plano) + ae.valor_da_causa(final, plano) + ae.criterio_de_calculo(final, params)
     saida += epistemica(final, params, plano)
+    saida += invariantes_numericas_do_documento(final)
     saida += invariantes_estruturais(final)
     saida += consistencia_procedimental(final)
     saida += ae.repeticao_de_conteudo(final, params)

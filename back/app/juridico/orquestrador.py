@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Callable, Iterable, Iterator
 
 from . import (auditor_certeza, auditor_secoes, auditor_semantico, auditor_temporal, auditores, autoridades as aut, calculos,
-               canonico, citacao, contrateses, fatos, plano, proposicoes, prova, raciocinio, scores, tabelas, teses)
+               canonico, citacao, contrateses, fatos, luna_pipeline, plano, proposicoes, prova, raciocinio, scores, tabelas, teses)
 from .busca import Filtros, ProvedorDeAutoridades
 
 
@@ -106,8 +106,14 @@ def analisar(
         r["itens"] = len(catalogo)
         r["arquivos"] = sorted({k["arquivo"] for k in catalogo})
     with rastro.etapa("issue_spotting", modelo=modelo) as r:
-        issues = teses.executar(_rastreado(llm, r), catalogo=catalogo, matriz=matriz, texto_matriz=fatos.para_prompt(matriz),
-                                contexto_caso=contexto_caso, estrategia_da_skill=textos_skill.get("SKILL.md", ""))
+        if luna_pipeline.ativo():
+            bruto, telemetria, skill_meta = luna_pipeline.issue_spotting_duplo(
+                _rastreado(llm, r), matriz=matriz, catalogo=catalogo, textos_skill=textos_skill)
+            issues = teses.normalizar(bruto, catalogo, matriz)
+            r["luna_pipeline_v2"] = {"telemetria": telemetria, "skill": skill_meta}
+        else:
+            issues = teses.executar(_rastreado(llm, r), catalogo=catalogo, matriz=matriz, texto_matriz=fatos.para_prompt(matriz),
+                                    contexto_caso=contexto_caso, estrategia_da_skill=textos_skill.get("SKILL.md", ""))
         r.update(teses.resumo_para_trace(issues))
     with rastro.etapa("matriz_com_fatos_chaveados") as r:
         matriz = fatos.montar(plano_est, case_facts=plano_est.get("case_facts"), fontes=fontes, fatos_extraidos=issues["fatos_extraidos"])
@@ -235,6 +241,19 @@ def fundamentar(
             with rastro.etapa("proposicoes", modelo=modelo_proposicoes if llm_proposicoes else "") as r:
                 r.update(proposicoes.pesquisar(rac, registro, data_referencia=referencia, trt_competente=trt_competente,
                                                llm=_rastreado(llm_proposicoes, r) if llm_proposicoes else None))
+                # Quando o entailment por proposição rodou, só autoridade que
+                # realmente SUSTENTA alguma proposição chega ao plano/redator.
+                # Candidato semanticamente próximo, mas irrelevante, vira
+                # lacuna de pesquisa — nunca citação de enfeite no capítulo.
+                for tese_rac in rac.get("teses") or []:
+                    if tese_rac.get("decisao") != "SUPPORTED":
+                        continue
+                    avaliadas = [a for p in tese_rac.get("proposicoes") or [] for a in (p.get("autoridades") or []) if a.get("avaliada")]
+                    if not avaliadas:
+                        continue
+                    ids_sustentam = {a["id"] for a in avaliadas if a.get("posicao") == proposicoes.SUSTENTA}
+                    if tese_rac.get("tese_id") in por_tese:
+                        por_tese[tese_rac["tese_id"]] = [registro.por_id[i] for i in ids_sustentam if i in registro.por_id]
                 r["certeza"] = proposicoes.resumo(rac)
         except Exception as erro:  # noqa: BLE001
             _falha(rac, "proposicoes", erro)
@@ -248,6 +267,9 @@ def fundamentar(
         pendencias += retirados
         r["pedidos_retirados_sem_pressuposto"] = retirados
         plano.estruturar_pedidos(plano_novo, issues, por_tese)
+        sem_vinculo = plano.retirar_pedidos_sem_vinculo(plano_novo)
+        pendencias += sem_vinculo
+        r["pedidos_retirados_sem_vinculo"] = sem_vinculo
         r["pedidos_sem_valor"] = [p["id"] for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]
         pendencias += [f"Pedido de pagamento sem valor calculado: {p.get('title') or p['id']} — fica fora do corpo até ser calculado"
                        for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]
