@@ -96,19 +96,48 @@ def legal_support(issues: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], d
 def petition_plan(state: CaseStateV2) -> dict[str, Any]:
     """4. Único ponto que cria capítulos, pedidos, cálculos e valor da causa."""
     chapters: list[dict[str, Any]] = []
+    seen_requests: set[str] = set()
     for issue in state.issues:
         if str(issue.get("status") or "").upper() != "SUPPORTED":
             continue
         iid = str(issue["issue_id"])
         support = next((a for a in state.authorities if a["issue_id"] == iid), {})
         authority_ids = [aid for claim in support.get("claims") or [] for aid in claim.get("authority_ids") or []]
+        request_ids: list[str] = []
+        # A issue pode sugerir consequências processuais; somente esta etapa
+        # materializa cada uma em request. Texto posterior jamais infere pedido
+        # a partir de título, capítulo ou regex.
+        for candidate in issue.get("possible_requests") or []:
+            title = str(candidate.get("title") if isinstance(candidate, dict) else candidate or "").strip()
+            if not title:
+                continue
+            semantic_key = re.sub(r"[^A-Z0-9]+", "_", title.upper()).strip("_")[:80]
+            if not semantic_key or semantic_key in seen_requests:
+                continue
+            seen_requests.add(semantic_key)
+            request_id = f"R{len(state.requests) + 1:03d}"
+            requested_type = str(candidate.get("type") if isinstance(candidate, dict) else "").upper()
+            monetary = requested_type == "MONETARY"
+            # Sem parâmetros completos não há valor, cálculo ou liquidação
+            # artificial. O request continua rastreável e pede revisão humana.
+            request = {
+                "request_id": request_id, "semantic_key": semantic_key,
+                "type": "MONETARY" if monetary else (requested_type or "DECLARATORY"),
+                "title": title, "issue_id": iid,
+                "fact_ids": list(dict.fromkeys([*(issue.get("triggering_fact_ids") or []), *(issue.get("supporting_fact_ids") or [])])),
+                "authority_ids": list(dict.fromkeys(authority_ids)), "calculation_id": None,
+                "value": None, "status": "NEEDS_INPUT" if monetary else "SUPPORTED",
+            }
+            state.requests.append(request)
+            request_ids.append(request_id)
         chapters.append({"chapter_id": f"CH_{iid}", "issue_id": iid,
                          "allowed_fact_ids": list(dict.fromkeys([*(issue.get("triggering_fact_ids") or []), *(issue.get("supporting_fact_ids") or [])])),
                          "allowed_authority_ids": list(dict.fromkeys(authority_ids)), "allowed_evidence_ids": [],
-                         "linked_request_ids": [], "title": str(issue.get("name") or "")})
+                         "linked_request_ids": request_ids, "title": str(issue.get("name") or "")})
     state.metadata["petition_date"] = date.today().isoformat()
     state.metadata["case_value"] = "0.00"
-    return {"stage": "PETITION_PLAN", "chapters": len(chapters), "requests": 0, "calculations": 0, "chapters_data": chapters}
+    return {"stage": "PETITION_PLAN", "chapters": len(chapters), "requests": len(state.requests),
+            "calculations": len(state.calculations), "chapters_data": chapters}
 
 
 def chapter_writing(state: CaseStateV2, plan: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -140,7 +169,14 @@ def review_and_repair(state: CaseStateV2) -> tuple[list[dict[str, Any]], dict[st
 
 def final_render(state: CaseStateV2) -> list[dict[str, Any]]:
     """7. Montagem determinística; não interpreta fatos ou Direito."""
-    return list(state.prose_sections)
+    sections = list(state.prose_sections)
+    requests = [r for r in state.requests if r.get("status") == "SUPPORTED"]
+    if requests:
+        lines = ["Diante do exposto, requer:"]
+        for index, request in enumerate(requests):
+            lines.append(f"{chr(97 + index)}) {request['title'].rstrip('.')}.")
+        sections.append({"code": "CLAIMS", "label": "Dos pedidos", "content": "\n\n".join(lines), "written_by": "FINAL_RENDER"})
+    return sections
 
 
 def run(caso_id: str, *, interview: str) -> dict[str, Any]:
