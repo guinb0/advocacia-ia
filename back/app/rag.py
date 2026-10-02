@@ -125,6 +125,21 @@ def vetor_literal(vetor: list[float]) -> str:
     return "[" + ",".join(f"{valor:.9g}" for valor in vetor) + "]"
 
 
+def _chave_embeddings() -> str:
+    """Usa a credencial global da OpenRouter, igual à transcrição.
+
+    Embeddings, OCR e transcrição pertencem à mesma conta operacional. Manter
+    uma chave antiga em ``EMBEDDINGS_API_KEY`` como prioridade fez o RAG usar
+    uma conta sem saldo enquanto a transcrição continuava funcionando. A
+    variável específica continua apenas como compatibilidade para instalações
+    legadas sem ``OPENROUTER_API_KEY``.
+    """
+    return (
+        os.getenv("OPENROUTER_API_KEY", "").strip()
+        or os.getenv("EMBEDDINGS_API_KEY", "").strip()
+    )
+
+
 def gerar_embeddings(textos: list[str], *, timeout: float = 120) -> list[list[float]]:
     """`timeout` é parâmetro porque há dois usos com prazos opostos.
 
@@ -136,11 +151,14 @@ def gerar_embeddings(textos: list[str], *, timeout: float = 120) -> list[list[fl
         return []
     dimensoes = int(os.getenv("EMBEDDINGS_DIMENSIONS", "1536"))
     modelo = _obrigatoria("EMBEDDINGS_MODEL_NAME")
+    chave = _chave_embeddings()
+    if not chave:
+        raise ErroRAG("OPENROUTER_API_KEY ausente para gerar embeddings")
     inicio = time.monotonic()
     try:
         resposta = httpx.post(
             _obrigatoria("EMBEDDINGS_BASE_URL").rstrip("/") + "/embeddings",
-            headers={"Authorization": f"Bearer {_obrigatoria('EMBEDDINGS_API_KEY')}"},
+            headers={"Authorization": f"Bearer {chave}"},
             json={"model": modelo, "input": textos, "dimensions": dimensoes}, timeout=timeout,
         )
         resposta.raise_for_status()

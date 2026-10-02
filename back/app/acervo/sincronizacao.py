@@ -83,7 +83,13 @@ def baixar_http(url: str) -> Resposta:
 
 
 def embeddings_configurados() -> bool:
-    return all(os.getenv(k, "").strip() for k in ("EMBEDDINGS_BASE_URL", "EMBEDDINGS_API_KEY", "EMBEDDINGS_MODEL_NAME"))
+    # A mesma chave global da OpenRouter atende transcrição, OCR e embeddings.
+    # EMBEDDINGS_API_KEY fica como reserva para instalações antigas.
+    return bool(
+        os.getenv("EMBEDDINGS_BASE_URL", "").strip()
+        and os.getenv("EMBEDDINGS_MODEL_NAME", "").strip()
+        and (os.getenv("OPENROUTER_API_KEY", "").strip() or os.getenv("EMBEDDINGS_API_KEY", "").strip())
+    )
 
 
 def gerar_embeddings_padrao(textos: list[str]) -> list[list[float]]:

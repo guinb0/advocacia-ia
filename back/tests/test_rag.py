@@ -4,7 +4,20 @@ from scripts.ingerir_jurimetria import (
     magistrados_do_payload,
     texto_do_payload,
 )
-from app.rag import _estatisticas_amostra, _normalizar_resultado, TrechoSimilar
+from app.rag import _chave_embeddings, _estatisticas_amostra, _normalizar_resultado, TrechoSimilar
+
+
+def test_embeddings_usam_a_chave_global_da_transcricao(monkeypatch) -> None:
+    """Uma credencial antiga de embeddings não pode desviar o tráfego da conta global."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "chave-global")
+    monkeypatch.setenv("EMBEDDINGS_API_KEY", "chave-legada-sem-saldo")
+    assert _chave_embeddings() == "chave-global"
+
+
+def test_embeddings_mantem_credencial_legada_como_reserva(monkeypatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("EMBEDDINGS_API_KEY", "chave-legada")
+    assert _chave_embeddings() == "chave-legada"
 
 
 def test_limpa_html_e_redige_dados_diretos() -> None:
