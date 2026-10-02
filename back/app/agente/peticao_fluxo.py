@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .. import armazenamento, peticao_local
-from ..petition_v2 import pipeline as petition_pipeline_v2
 from .. import casos as casos_ocr
 from .cliente import ErroDoAgente
 
@@ -131,40 +130,11 @@ def gerar_completo(caso_id: str) -> dict[str, Any]:
             "A geração de petições está temporariamente desativada durante a migração para a "
             "nova pipeline. Nenhuma minuta legada será gerada até a liberação da V2."
         )
-    ent = transcricao(caso_id)
-    peticao_local.avancar_etapa("Gerando pela pipeline V2…", 1)
-    resultado = petition_pipeline_v2.run(caso_id, interview=ent["texto"])
-    anterior = peticao_local.carregar(caso_id) or {}
-    if anterior:
-        armazenamento.registrar_versao_peticao(caso_id, anterior)
-    agora = datetime.now(timezone.utc).isoformat()
-    dados = {
-        "id": ID_LOCAL, "generation_id": resultado["generation_id"], "document_type": "INITIAL_PETITION",
-        "status": resultado["status"], "version": int(anterior.get("version") or 0) + 1,
-        "title": "Petição inicial", "created_at": anterior.get("created_at") or agora, "updated_at": agora,
-        "sections": resultado["sections"], "analise": {}, "review": {"findings": resultado["findings"]},
-        "readiness": {"ready": resultado["protocolable"], "protocolable": resultado["protocolable"],
-                      "mode": "pipeline_v2", "blocking_issues": [str(f.get("message") or f.get("code") or "") for f in resultado["findings"]],
-                      "warnings": [], "pendencias": [], "completo": bool(resultado["sections"])},
-        "trace": {"pipeline_v2": resultado["trace"], "case_state": resultado["case_state"]},
-        "model": "pipeline_v2",
-    }
-    # Persistência e DOCX são infraestrutura neutra. Nenhum validador da V1 é
-    # chamado nesta rota: a V2 decide o próprio estado de prontidão.
-    armazenamento.salvar_peticao_local(caso_id, dados, peticao_local.montar_docx(dados["sections"]))
-
-    analise = dados.get("analise") or {}
-    agora = dados.get("updated_at") or datetime.now(timezone.utc).isoformat()
-    analise_limpa = {k: v for k, v in analise.items() if k != "contexto"}
-    return {
-        "run_id": ID_LOCAL,
-        "status": "DONE",
-        "requested_at": agora,
-        "generation_id": dados.get("generation_id", ID_LOCAL),
-        "pipeline": "local",
-        "analise": analise_limpa,
-        "peticao": peticao_local.para_api(dados),
-    }
+    # A flag jamais pode acionar a V1. A V2 será conectada aqui somente quando
+    # sua entrada estiver completa e tiver sido liberada explicitamente.
+    raise ErroDoAgente(
+        "A pipeline V2 ainda está em implantação. A geração permanece desativada para preservar os casos existentes."
+    )
 
 
 def revisar_peticao(
