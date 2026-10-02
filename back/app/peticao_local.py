@@ -2985,6 +2985,11 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         )
     for aviso in diag["fallbacks"]:
         log.error("petição local: FALLBACK na geração do caso %s — %s", caso_id, aviso)
+    if estrito and diag["fallbacks"]:
+        raise ErroPeticao(
+            "Modo strict: houve fallback antes da redação — " + "; ".join(diag["fallbacks"])
+            + ". Nenhuma peça degradada foi entregue."
+        )
     pipeline = {
         "generation_id": generation_id,
         "caso_id": caso_id,
@@ -3366,6 +3371,11 @@ Cada content deve conter parágrafos separados por linha em branco."""
             raise ErroPeticao(
                 "Modo strict: a verificação jurídica da peça não concluiu — " + "; ".join(falhas_juridicas or ["auditoria não executou"])
                 + ". A peça não foi entregue.")
+    if estrito and diag["fallbacks"]:
+        raise ErroPeticao(
+            "Modo strict: uma etapa posterior acionou fallback — " + "; ".join(diag["fallbacks"])
+            + ". Nenhuma peça degradada foi entregue."
+        )
     achados_criticos = peticao_aprendizado.avaliar_documento(secoes)
     peticao_aprendizado.registrar_avaliacao(
         generation_id=generation_id, caso_id=caso_id, tipo="post_generation", achados=achados_criticos
