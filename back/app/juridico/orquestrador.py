@@ -241,6 +241,19 @@ def fundamentar(
             with rastro.etapa("proposicoes", modelo=modelo_proposicoes if llm_proposicoes else "") as r:
                 r.update(proposicoes.pesquisar(rac, registro, data_referencia=referencia, trt_competente=trt_competente,
                                                llm=_rastreado(llm_proposicoes, r) if llm_proposicoes else None))
+                # Quando o entailment por proposição rodou, só autoridade que
+                # realmente SUSTENTA alguma proposição chega ao plano/redator.
+                # Candidato semanticamente próximo, mas irrelevante, vira
+                # lacuna de pesquisa — nunca citação de enfeite no capítulo.
+                for tese_rac in rac.get("teses") or []:
+                    if tese_rac.get("decisao") != "SUPPORTED":
+                        continue
+                    avaliadas = [a for p in tese_rac.get("proposicoes") or [] for a in (p.get("autoridades") or []) if a.get("avaliada")]
+                    if not avaliadas:
+                        continue
+                    ids_sustentam = {a["id"] for a in avaliadas if a.get("posicao") == proposicoes.SUSTENTA}
+                    if tese_rac.get("tese_id") in por_tese:
+                        por_tese[tese_rac["tese_id"]] = [registro.por_id[i] for i in ids_sustentam if i in registro.por_id]
                 r["certeza"] = proposicoes.resumo(rac)
         except Exception as erro:  # noqa: BLE001
             _falha(rac, "proposicoes", erro)

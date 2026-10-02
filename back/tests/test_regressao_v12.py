@@ -48,6 +48,14 @@ def test_5_sequencia_principal_incoerente_falha():
     assert "SEQUENCIA_DE_HEADINGS_INVALIDA" in codigos(df.invariantes_estruturais(secoes))
 
 
+def test_5a_rotulo_e_conteudo_com_mesmo_capitulo_nao_sao_dois_capitulos():
+    secoes = [
+        {"code": "PRELIMINARY", "content": "I. Preliminares\n\nI. Preliminares\nTexto"},
+        {"code": "FACTS", "content": "II. Dos Fatos\n\nII. Dos Fatos\nTexto"},
+    ]
+    assert "SEQUENCIA_DE_HEADINGS_INVALIDA" not in codigos(df.invariantes_estruturais(secoes))
+
+
 def test_titulo_romano_sem_markdown_vira_titulo_negrito_no_docx():
     secoes = [{"code": "LEGAL_GROUNDS", "content": "II. DA COMPETÊNCIA DA JUSTIÇA DO TRABALHO"}]
     with zipfile.ZipFile(io.BytesIO(pl.montar_docx(secoes))) as arquivo:

@@ -69,6 +69,12 @@ def test_2b_numero_inexistente_falha_e_bijecao_do_ledger():
     assert "DOCUMENTO_INEXISTENTE_NO_LEDGER" in cods(dl.validar_referencias([{"code": "X", "content": "ver Documento 07"}], ledger))
 
 
+def test_2c_descricao_documental_para_na_virgula():
+    ledger = dl.montar([{"arquivo": "Doc 25. PPP - Perfil Profissiografico.pdf", "texto": "ppp " * 50}])
+    secoes = [{"code": "FACTS", "content": "O Documento 25 — PPP), circunstância que agrava a insegurança documental."}]
+    assert not dl.validar_referencias(secoes, ledger)
+
+
 # TESTE 3 — duplicata física → um documento lógico, um rótulo
 def test_3_uploads_da_mesma_lisa_viram_um_documento_logico():
     lisa = "LEVANTAMENTO INTERNO SOBRE ACIDENTES LISA 54233677 descricao do evento " * 20

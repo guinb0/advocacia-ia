@@ -260,7 +260,10 @@ def _documentos_citados(secoes: dict[str, str], fontes: Fontes) -> list[Violacao
 #: "X anexo/anexa/juntado/em anexo" — X é o documento que a peça diz existir.
 _ALEGA_ANEXO = re.compile(
     r"([A-Za-zÀ-ú][A-Za-zÀ-ú0-9ºª\s/-]{2,60}?)\s*,?\s*(?:\(|—|–)?\s*"
-    r"(?:anex[oa]s?\b|em\s+anexo|juntad[oa]s?\b|acostad[oa]s?\b|inclus[oa]s?\b)",
+    # "encontram-se acostados" e "deverão ser juntados" são construções
+    # passivas: o objeto vem depois do verbo e o grupo anterior não identifica
+    # um anexo. Referências documentais efetivas já são verificadas pelo ledger.
+    r"(?:anex[oa]s?\b|em\s+anexo|inclus[oa]s?\b)",
     re.IGNORECASE,
 )
 #: "juntada de todos os documentos anexos (CTPS, CAT, declaração de hipossuficiência)".

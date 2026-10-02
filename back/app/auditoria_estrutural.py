@@ -557,6 +557,21 @@ def repeticao_de_conteudo(secoes: list[dict[str, Any]], params: dict[str, Any]) 
 # ------------------------------------------------------------------ contradição de data (determinística) e candidatos semânticos
 
 _DATA_BR = re.compile(r"\b\d{2}/\d{2}/\d{4}\b")
+_TIPOS_DE_EVENTO = (
+    ("BENEFIT_START", re.compile(r"\b(?:benef[ií]cio|aux[ií]lio|NB\b|DIB\b|INSS)" , re.I)),
+    ("SURGERY", re.compile(r"\b(?:cirurgia|cir[uú]rgic)" , re.I)),
+    ("EXPERT_EXAM", re.compile(r"\b(?:per[ií]cia|pericial)" , re.I)),
+    ("ACCIDENT", re.compile(r"\b(?:acidente|assalto|queda|sinistro)" , re.I)),
+    ("ADMISSION", re.compile(r"\b(?:admiss[aã]o|admitid)" , re.I)),
+    ("DISMISSAL", re.compile(r"\b(?:dispensa|rescis[aã]o|demiss[aã]o)" , re.I)),
+)
+
+
+def _tipo_de_evento(texto: str) -> str:
+    for tipo, padrao in _TIPOS_DE_EVENTO:
+        if padrao.search(texto or ""):
+            return tipo
+    return ""
 
 
 def contradicao_de_data(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> list[Violacao]:
@@ -565,12 +580,14 @@ def contradicao_de_data(secoes: list[dict[str, Any]], plano: dict[str, Any]) -> 
     for f in plano.get("fatos") or []:
         datas = set(_DATA_BR.findall(f"{f.get('data', '')} {f.get('fato', '')}"))
         alvo = pp._tokens(re.sub(_DATA_BR, " ", f["fato"]))  # noqa: SLF001
-        if len(datas) != 1 or len(alvo) < 3:
+        event_type = str(f.get("event_type") or _tipo_de_evento(str(f.get("fato") or "")))
+        if len(datas) != 1 or len(alvo) < 3 or not event_type:
             continue
         for s in secoes:
             for frase in re.split(r"(?<=[.;])\s+", str(s.get("content") or "")):
                 em_frase = set(_DATA_BR.findall(frase))
-                if em_frase and not (em_frase & datas) and len(alvo & pp._tokens(frase)) / len(alvo) >= 0.6:  # noqa: SLF001
+                mesmo_evento = _tipo_de_evento(frase) == event_type
+                if em_frase and mesmo_evento and not (em_frase & datas) and len(alvo & pp._tokens(frase)) / len(alvo) >= 0.6:  # noqa: SLF001
                     saida.append(_v("CONTRADICAO_DE_DATA", str(s.get("code")), frase[:120],
                                     f"O fato {f['id']} tem data {sorted(datas)[0]} no caso, mas este trecho o descreve com {sorted(em_frase)[0]}.", "Use a data do CASE_FACTS."))
     return saida

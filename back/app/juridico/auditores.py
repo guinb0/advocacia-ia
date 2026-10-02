@@ -106,7 +106,26 @@ def auditar_legal(secoes: list[dict[str, Any]], registro: aut.Registro, data_ref
 
 # ------------------------------------------------------------------ FACT
 
-_REFERENCIA_DE_PRECEDENTE = re.compile(r"\b(?:TST|TRT|STF|STJ|Rel\.|Relat|Redator|julgad|DEJT|DJe|publicad)", re.I)
+_REFERENCIA_DE_PRECEDENTE = re.compile(r"\b(?:TST|TRT|STF|STJ|ADC|ADI|ADPF|ADO|Súmula|Tema|Rel\.|Relat|Redator|julgad|DEJT|DJe|publicad)", re.I)
+_FATO_DE_AUTORIDADE = re.compile(r"\b(?:ADC|ADI|ADPF|ADO)\s*\d+\b|\b(?:STF|STJ|TST|TRT)\b|\bSúmula\s*\d+\b|\bTema\s*\d+\b", re.I)
+_FATO_PROCEDIMENTAL = re.compile(r"\b(?:ajuiz|protocol|audi[eê]ncia|intima[cç][aã]o|prazo processual)\w*", re.I)
+
+
+def escopo_do_dado(texto: str, inicio: int) -> str:
+    """Classifica o número/data antes de exigir fonte da matriz do caso.
+
+    O FACT auditor só é autoridade para CASE_FACT. Datas, valores e resultados
+    atribuídos a julgados pertencem à autoridade citada; dados de protocolo são
+    procedimentais. Ambos continuam sujeitos aos seus validadores próprios.
+    """
+    de = max(texto.rfind(".", 0, inicio), texto.rfind("\n", 0, inicio)) + 1
+    ate = min((p for p in (texto.find(".", inicio), texto.find("\n", inicio)) if p >= 0), default=len(texto))
+    contexto = texto[de:ate]
+    if _FATO_DE_AUTORIDADE.search(contexto):
+        return "LEGAL_AUTHORITY_FACT"
+    if _FATO_PROCEDIMENTAL.search(contexto):
+        return "PROCEDURAL_FACT"
+    return "CASE_FACT"
 
 
 def _dentro_de_citacao_de_precedente(texto: str, inicio: int) -> bool:
@@ -148,7 +167,8 @@ def auditar_fatos(secoes: list[dict[str, Any]], matriz: dict[str, Any], *, calcu
         for m in list(_REAIS.finditer(texto)) + list(_DATA.finditer(texto)):
             bruto = m[0]
             canon = valor_canonico(bruto)
-            if _dentro_de_citacao_de_precedente(texto, m.start()):
+            escopo = escopo_do_dado(texto, m.start())
+            if escopo != "CASE_FACT" or _dentro_de_citacao_de_precedente(texto, m.start()):
                 continue
             if canon in contraditorios:
                 achados.append(_achado("FACT", "FATO_CONTRADITORIO_USADO", BLOQUEIA, code, bruto, f"versão de {contraditorios[canon]['chave']} em contradição não resolvida"))

@@ -763,6 +763,7 @@ def invariantes_estruturais(secoes: list[dict[str, Any]]) -> list[Violacao]:
     esperado = 1
     principais: list[tuple[str, str]] = []
     for s in secoes:
+        numeros_principais_na_secao: set[str] = set()
         for linha in str(s.get("content") or "").splitlines():
             limpa = linha.strip().lstrip("# ").strip("* ")
             sub = re.match(r"^([IVXLC]+)\.(\d+)\.?\s+", limpa)
@@ -775,6 +776,12 @@ def invariantes_estruturais(secoes: list[dict[str, Any]]) -> list[Violacao]:
             main = _TITULO_ROMANO.match(limpa)
             if not main:
                 continue
+            # `representacao_final` pode imprimir o rótulo estrutural e o
+            # conteúdo começar pelo mesmo título. É uma única seção visível,
+            # não dois capítulos consecutivos.
+            if main.group(1) in numeros_principais_na_secao:
+                continue
+            numeros_principais_na_secao.add(main.group(1))
             numero = _de_romano(main.group(1))
             if numero != esperado:
                 saida.append(_v("SEQUENCIA_DE_HEADINGS_INVALIDA", str(s.get("code")), limpa,

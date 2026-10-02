@@ -159,6 +159,26 @@ def test_afirmacao_numerica_impossivel_bloqueia():
     assert "ALEGACAO_NUMERICA_FALSA" in _codigos(auditor_semantico.auditar(secoes))
 
 
+def test_dado_de_precedente_nao_e_cobrado_como_fato_do_cliente():
+    secoes = [{"code": "PRELIMINARY", "content": "A ADC 80 do STF, julgada em 03/09/2026, fixou presunção relativa até R$ 5.000,00."}]
+    assert auditores.auditar_fatos(secoes, {"fatos": []})["achados"] == []
+
+
+def test_artigo_contextual_nao_e_avaliado_como_fundamento_da_adc():
+    registro = aut.Registro([
+        aut.Autoridade(id="ADC80", tipo="controle_concentrado", chave="adc:stf:80", classe="ADC", numero="80", tribunal="STF",
+                        texto="O STF declarou inconstitucional o critério de 40% do art. 790, § 3º, da CLT.", vigencia_inicio="2026-09-03"),
+        aut.Autoridade(id="ART790", tipo="artigo", chave="art:clt:790", norma="clt", artigo="790",
+                        texto="Art. 790. O benefício será concedido na forma da lei. § 3º Critério legal.", vigencia_inicio="1943-01-01"),
+    ])
+    secoes = [{"code": "PRELIMINARY", "content": "A ADC 80 do STF declarou inconstitucional o critério do art. 790, § 3º, da CLT."}]
+    resposta = lambda *_: {"itens": [{"id": "C1", "classificacao": "EXACT_SUPPORT", "trecho_oficial": "declarou inconstitucional o critério de 40% do art. 790, § 3º"}]}
+    rel = citacao.verificar(secoes, registro, date(2026, 10, 1), llm=resposta)
+    artigo = next(c for c in rel["citacoes"] if c["authority_id"] == "ART790")
+    assert artigo["claim_role"] == "CONTEXTUAL_STATUTE" and artigo["aprovada"]
+    assert "CITACAO_NAO_SUSTENTA_A_AFIRMACAO" not in _codigos(rel)
+
+
 def test_sequela_permanente_categorica_com_pericia_pendente_bloqueia():
     from app.juridico import auditor_certeza
     secoes = [

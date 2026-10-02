@@ -25,7 +25,10 @@ from . import plano_da_peticao as pp
 from .conferencia_peticao import Violacao
 
 _REF = re.compile(
-    r"\bDocumentos?\s+(\d{1,3}(?:\s*(?:[/,–—-]|\se\s|\sa\s)\s*\d{1,3})*)(?:\s*(?:—|–|-)\s*([^.;:\n]{3,80}))?",
+    # A descrição termina na vírgula: "Documento 25 — PPP), circunstância..."
+    # descreve o PPP, não toda a oração posterior. Sem esse limite o auditor
+    # compara palavras da fundamentação ao nome do arquivo e cria falso conflito.
+    r"\bDocumentos?\s+(\d{1,3}(?:\s*(?:[/,–—-]|\se\s|\sa\s)\s*\d{1,3})*)(?:\s*(?:—|–|-)\s*([^.,;:\n]{3,80}))?",
     re.IGNORECASE,
 )
 _INTERNO = re.compile(r"checklist|check list|triagem|relat[óo]rio\s+interno|anota[cç][ãa]o\s+interna|entrevista|contrato\s+de\s+honor", re.IGNORECASE)

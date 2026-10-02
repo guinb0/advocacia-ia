@@ -47,6 +47,8 @@ LOTE = 20
 CLASSIFICAR_POR_PROPOSICAO = 3
 ANOS_PRECEDENTE_ANTIGO = 8
 _JURISPRUDENCIA = {"sumula", "sumula_vinculante", "oj", "tema", "controle_concentrado", "precedente"}
+_CONTROLE_CONCENTRADO = re.compile(r"\b(?:ADC|ADI|ADPF|ADO|inconstitucional(?:idade)?)\b", re.I)
+_PRECEDENTE_VINCULANTE = re.compile(r"\b(?:tese vinculante|repercuss[aã]o geral|tema)\b", re.I)
 
 _CACHE: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
 _CACHE_MAX = 5000
@@ -66,6 +68,24 @@ def limpar_cache() -> None:
         _CACHE.clear()
 
 
+def contrato_da_proposicao(p: dict[str, Any]) -> dict[str, str]:
+    """Contrato claim→autoridade, definido antes da recuperação.
+
+    Similaridade pode sugerir candidatos; ela não pode transformar artigo citado
+    como contexto em fundamento de decisão do STF. O contrato deixa explícito o
+    tipo de autoridade que pode sustentar cada proposição.
+    """
+    texto = str(p.get("texto") or "")
+    if _CONTROLE_CONCENTRADO.search(texto):
+        return {"claim_id": str(p.get("id") or _h(_compacto(texto)), "claim_type": "CASE_LAW_HOLDING",
+                "required_authority_type": "controle_concentrado"}
+    if _PRECEDENTE_VINCULANTE.search(texto):
+        return {"claim_id": str(p.get("id") or _h(_compacto(texto)), "claim_type": "PRECEDENT_HOLDING",
+                "required_authority_type": "tema"}
+    return {"claim_id": str(p.get("id") or _h(_compacto(texto)), "claim_type": "LEGAL_PROPOSITION",
+            "required_authority_type": ""}
+
+
 # ------------------------------------------------------------------ busca por proposição
 
 def pesquisar(
@@ -76,7 +96,11 @@ def pesquisar(
     consultas = 0
     for t in raciocinio.get("teses") or []:
         for p in t["proposicoes"]:
+            p.update(contrato_da_proposicao(p))
             achados = registro.consultar(f"{p['texto']} {t['tese']}", filtros, k)
+            requerido = p["required_authority_type"]
+            if requerido:
+                achados = [(a, score) for a, score in achados if a.tipo == requerido]
             consultas += 1
             p["autoridades"] = [{
                 "id": a.id, "titulo": a.titulo or a.chave, "tipo": a.tipo, "tribunal": a.tribunal, "orgao": a.orgao,
