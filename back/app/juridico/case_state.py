@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,7 +21,11 @@ ESTAGIOS = (
     "SNAPSHOT_PROSE", "SNAPSHOT_RENDER_INPUT", "SNAPSHOT_FINAL",
 )
 _CAMPOS_CONGELADOS = ("facts", "issues", "authorities", "calculations", "requests", "tables", "metadata")
-_MARCADORES_INTERNOS = ("fato-", "evento-", "autor.cpf", "uuid", "internal_trace", "generation_id", "caminho")
+# Somente identificadores técnicos inequívocos. Termos normais da língua como
+# "caminho" não são trace e não podem barrar fundamentação jurídica válida.
+_MARCADORES_INTERNOS = ("autor.cpf", "internal_trace", "generation_id", "source_document_id", "source_location")
+_PADRAO_ID_INTERNO = re.compile(r"\b(?:fato|evento)-\d+\b", re.I)
+_PADRAO_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", re.I)
 
 
 class MutacaoDoCaseState(RuntimeError):
@@ -127,4 +132,8 @@ def trace_em_prosa(secoes: list[dict[str, Any]]) -> list[str]:
         for marcador in _MARCADORES_INTERNOS:
             if marcador in texto:
                 achados.append(f"{secao.get('code') or '?'}:{marcador}")
+        if _PADRAO_ID_INTERNO.search(texto):
+            achados.append(f"{secao.get('code') or '?'}:id_interno")
+        if _PADRAO_UUID.search(texto):
+            achados.append(f"{secao.get('code') or '?'}:uuid")
     return achados

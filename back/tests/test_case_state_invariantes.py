@@ -53,6 +53,14 @@ def test_trace_cannot_enter_prose():
     assert case_state.trace_em_prosa([{"code": "FACTS", "content": "evento-5 autor.cpf"}])
 
 
+def test_ids_internos_e_uuid_ainda_sao_bloqueados():
+    assert case_state.trace_em_prosa([{"code": "FACTS", "content": "evento-5 123e4567-e89b-12d3-a456-426614174000"}])
+
+
+def test_termo_juridico_comum_nao_e_trace():
+    assert not case_state.trace_em_prosa([{"code": "LEGAL_GROUNDS", "content": "O caminho processual adequado é a prova pericial."}])
+
+
 def test_request_without_fact_or_authority_is_invalid():
     state = _state(); state["requests"][0]["factual_support"] = []; state["requests"][0]["authority_ids"] = []
     errors = case_state.validar(state)
