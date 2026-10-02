@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,19 +26,6 @@ __all__ = [
 ]
 
 ID_LOCAL = peticao_local.ID_LOCAL
-
-
-def _geracao_v2_disponivel() -> bool:
-    """Interruptor explícito: V1 não pode voltar a gerar por acidente.
-
-    A liberação futura exige que a V2 esteja habilitada *e* que o escritório
-    tenha liberado a geração. Até lá, a UI recebe uma explicação clara em vez
-    de executar qualquer caminho legado.
-    """
-    return (
-        os.getenv("PETITION_PIPELINE_V2", "0").strip().lower() in {"1", "true", "sim", "on"}
-        and os.getenv("PETITION_GENERATION_ENABLED", "0").strip().lower() in {"1", "true", "sim", "on"}
-    )
 
 
 def transcricao(caso_id: str) -> dict[str, Any]:
@@ -125,16 +111,25 @@ def gerar_peticao(caso_id: str, *, opcao: int = 0) -> dict[str, Any]:
 
 def gerar_completo(caso_id: str) -> dict[str, Any]:
     """Analisa entrevista + OCR e redige a petição (síncrono)."""
-    if not _geracao_v2_disponivel():
-        raise ErroDoAgente(
-            "A geração de petições está temporariamente desativada durante a migração para a "
-            "nova pipeline. Nenhuma minuta legada será gerada até a liberação da V2."
-        )
-    # A flag jamais pode acionar a V1. A V2 será conectada aqui somente quando
-    # sua entrada estiver completa e tiver sido liberada explicitamente.
-    raise ErroDoAgente(
-        "A pipeline V2 ainda está em implantação. A geração permanece desativada para preservar os casos existentes."
-    )
+    peticao_local.avancar_etapa("Lendo a transcrição da entrevista…", 1)
+    ent = transcricao(caso_id)
+    try:
+        dados = peticao_local.gerar(caso_id, texto_entrevista=ent["texto"])
+    except peticao_local.ErroPeticao as erro:
+        raise _erro_peticao(erro) from erro
+
+    analise = dados.get("analise") or {}
+    agora = dados.get("updated_at") or datetime.now(timezone.utc).isoformat()
+    analise_limpa = {k: v for k, v in analise.items() if k != "contexto"}
+    return {
+        "run_id": ID_LOCAL,
+        "status": "DONE",
+        "requested_at": agora,
+        "generation_id": dados.get("generation_id", ID_LOCAL),
+        "pipeline": "local",
+        "analise": analise_limpa,
+        "peticao": peticao_local.para_api(dados),
+    }
 
 
 def revisar_peticao(
