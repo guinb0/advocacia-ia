@@ -35,6 +35,7 @@ def _pedido(pid: str, *, tipo: str, objeto: str, tese_origem: str, valor: float 
         "metodo_calculo": {"base": valor, "multiplicador": 1, "resultado": valor, "criterio": criterio, "deterministico": True} if valor else {},
         "tipo_de_item": "autonomo", "agrava": "", "agrava_id": "", "bem_juridico": "", "evento_causador": "", "dano": "", "objeto_economico": "",
         "origem": "issue_spotting",
+        "issue_id": tese_origem, "semantic_key": norm(tipo or objeto).upper().replace(" ", "_"), "no_request_reason": None,
     }
 
 
@@ -85,6 +86,9 @@ def estruturar_pedidos(plano: dict[str, Any], issues: dict[str, Any], autoridade
             "unidade": "BRL",
             "status": "PENDING_CALCULATION" if monetario(p) and valor is None else "SUPPORTED",
             "de_praxe": de_praxe,
+            "issue_id": str(t.get("id") or "") if t else "",
+            "semantic_key": norm(str(p.get("tipo") or p.get("title") or p.get("objeto") or "")).upper().replace(" ", "_"),
+            "no_request_reason": None,
         })
     return plano.get("pedidos") or []
 
@@ -132,7 +136,9 @@ def integrar(plano_est: dict[str, Any], issues: dict[str, Any], calculos: list[d
     """Plano estruturado + issue spotting + cálculos → (novo plano, pendências nomeadas)."""
     plano = copy.deepcopy(plano_est)
     plano.setdefault("teses", [])
-    plano.setdefault("pedidos", [])
+    # No strict o outline legado ainda fornece contexto/fatos, mas nunca pedidos.
+    # Requests nascem exclusivamente deste planejador, a partir de issues + cálculos.
+    plano["pedidos"] = [] if plano.get("_somente_motor_juridico") else plano.setdefault("pedidos", [])
     ref_para_f = {f["id"]: f.get("ref") for f in matriz.get("fatos") or [] if f.get("origem") == "plano" and f.get("ref")}
     por_tese = {c.get("tese_id"): c for c in calculos}
     pendencias: list[str] = []
@@ -150,6 +156,7 @@ def integrar(plano_est: dict[str, Any], issues: dict[str, Any], calculos: list[d
         monetario = bool(t["calculo"].get("rubrica"))
         if monetario and (c is None or c.get("erro") or not c.get("valor")):
             t["pendente_de_calculo"] = True
+            t["no_request_reason"] = "PENDING_CALCULATION"
             faltam = t["calculo"].get("parametros_faltantes") or [(c or {}).get("erro") or "parâmetros do cálculo"]
             pendencias.append(f"Calcular antes do protocolo: {t['tese']} — faltam {', '.join(faltam)}")
             continue
@@ -184,6 +191,8 @@ def integrar(plano_est: dict[str, Any], issues: dict[str, Any], calculos: list[d
             for x in plano["teses"]:
                 if x["id"] == tid:
                     x.setdefault("pedidos_ids", []).append(pid)
+        elif t["decisao"] == ts.INCLUIR:
+            t["no_request_reason"] = "ISSUE_SEM_PRETENSAO_AUTONOMA"
     for c in matriz.get("contradicoes") or []:
         versoes = " × ".join(f"«{v.get('valor', v.get('detalhe', ''))}»" for v in c["versoes"])
         pendencias.append(f"Contradição em {c['chave']}: {versoes} — confirmar a versão correta")

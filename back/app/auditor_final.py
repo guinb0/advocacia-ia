@@ -155,49 +155,10 @@ def executar(
             break
         if it == max_iteracoes:
             break
-        # 1) abertura duplicada: correção DETERMINÍSTICA
-        if any(a.codigo in ("QUALIFICACAO_DUPLICADA", "BLOCO_ESTRUTURAL_DUPLICADO", "TITULO_DA_ACAO_DUPLICADO") for a in criticos):
-            secoes, n = ae.remover_aberturas_duplicadas(secoes, plano.get("partes") or {}, params)
-            passo["correcoes"].append({"aberturas_duplicadas_removidas": n})
-        # 1b) verba rescisória com o vínculo ativo: retirada DETERMINÍSTICA (não depende do modelo aceitar)
-        if any(a.codigo == "VERBA_RESCISORIA_COM_VINCULO_ATIVO" for a in criticos):
-            fora = retirar_pedidos(plano, ae.pedidos_rescisorios_com_vinculo_ativo(secoes, plano))
-            if fora:
-                secoes = rerenderizar_pedidos(secoes, plano)
-                retirados = [f"{p.get('tipo') or p.get('objeto')}".strip() for p in fora
-                             if p.get("tipo_de_item", "autonomo") in ("autonomo", "acessorio", "")]
-                relatorio.setdefault("pedidos_retirados", []).extend(retirados)
-                passo["correcoes"].append({"pedidos_retirados_vinculo_ativo": retirados})
-            criticos = [a for a in criticos if a.codigo != "VERBA_RESCISORIA_COM_VINCULO_ATIVO"]
-        # 2) ledger: o modelo propõe, o código valida
-        do_ledger = [a for a in criticos if a.secao == "LEDGER" or a.codigo in (
-            "MAJORACAO_COMO_SEGUNDA_INDENIZACAO", "PEDIDOS_SOBREPOSTOS", "SUBSIDIARIO_SOMADO_AO_PRINCIPAL", "VALOR_INCONSISTENTE_COM_METODO", "PEDIDO_DUPLICADO")]
-        if do_ledger:
-            novos = revisar_ledger(chamar, plano, do_ledger)
-            if novos:
-                plano["pedidos"] = novos
-                secoes = rerenderizar_pedidos(secoes, plano)
-                passo["correcoes"].append({"ledger_revisado": [p["id"] for p in novos]})
-        # 3) o resto: reescrita da seção com a lista exata de defeitos
-        por_secao: dict[str, list[Violacao]] = {}
-        for a in criticos:
-            if a in do_ledger or a.codigo in ("QUALIFICACAO_DUPLICADA", "BLOCO_ESTRUTURAL_DUPLICADO", "TITULO_DA_ACAO_DUPLICADO", "PEDIDO_FORA_DO_PLANO"):
-                continue
-            por_secao.setdefault(a.secao or "", []).append(a)
-        novas = []
-        for s in secoes:
-            do_s = por_secao.get(str(s.get("code")))
-            if not do_s:
-                novas.append(s)
-                continue
-            texto = reescrever(s, "CORRIJA EXATAMENTE ESTES PONTOS (sem inventar dado; ausência de prova não é prova de ausência):\n" + "\n".join(
-                f"- [{a.codigo}] {a.motivo} Trecho: {a.trecho}. Correção: {a.correcao}" for a in do_s))
-            if texto:
-                novas.append({**s, "content": texto})
-                passo["correcoes"].append({"secao": s.get("code"), "codigos": sorted({a.codigo for a in do_s})})
-            else:
-                novas.append(s)
-        secoes = novas
+        # Auditoria é read-only. Findings indicam replanejamento, nunca uma
+        # alteração de facts, requests, cálculos, autoridades ou prosa.
+        passo["correcoes"].append({"request_replan": sorted({a.codigo for a in criticos})})
+        break
     finais = [a for a in achados if a.bloqueia]
     relatorio["pendencias_humanas"] = [f"{a.codigo}:{a.secao} — {a.motivo}"[:260] for a in finais]
     relatorio["liberada"] = not finais

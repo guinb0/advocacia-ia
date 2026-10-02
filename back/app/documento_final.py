@@ -630,6 +630,16 @@ def higienizar(
     secoes: list[dict[str, Any]], plano: dict[str, Any], params: dict[str, Any], *, texto_dos_autos: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rel: dict[str, Any] = {}
+    if plano.get("_juridico_estrito"):
+        # O render jurídico já inseriu pedidos, valores, tabelas e data. Daqui
+        # em diante só layout; texto jurídico não é apagado nem "consertado".
+        return _renumerar_capitulos([dict(s) for s in secoes]), {
+            "modo": "strict_visual_only", "mutacoes_juridicas_desligadas": True,
+            "metadata_interna_removida": [],
+            "estabilidade": {"modo": "strict", "placeholders_mantidos": sum(
+                len(_PLACEHOLDER_NO_CORPO.findall(str(s.get("content") or ""))) for s in secoes
+            )},
+        }
     secoes = peticao_migracao_legado.migrar_secoes(secoes)
     secoes, metadata = _cortar_metadata(secoes, params)
     rel["metadata_interna_removida"] = metadata

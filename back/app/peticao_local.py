@@ -64,6 +64,7 @@ from .juridico import render as juridico_render
 from .juridico import repositorio as juridico_repo
 from .juridico import teses as juridico_teses
 from .juridico import imutabilidade as juridico_imutabilidade
+from .juridico import case_state as juridico_case_state
 
 log = logging.getLogger("peticao_local")
 
@@ -2904,9 +2905,14 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
     #            pronto a tempo e, no fim, põe lacunas/defesas/críticos nas pendências do advogado.
     modo_juridico = juridico.modo()
     estrito, sombra = modo_juridico == juridico.STRICT, modo_juridico == juridico.SHADOW
+    if estrito:
+        # O outline legado permanece como matéria-prima de fatos, não de pedidos.
+        plano_est["_somente_motor_juridico"] = True
     assistido = juridico.assistido()
     falhas_juridicas: list[str] = []
     prep_juridico: dict[str, Any] | None = None
+    case_state_final: dict[str, Any] | None = None
+    snapshots: list[dict[str, Any]] = []
     analise_em_sombra = None
     if estrito:
         avancar_etapa("Identificando todas as teses possíveis do caso…", 22)
@@ -2951,16 +2957,17 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         plano_est = prep_juridico["plano_est"]
         outline = _outline_para_redigir(plano) + "\n\n" + plano_da_peticao.para_prompt(plano_est)
         erros_do_plano = juridico_imutabilidade.validar(plano_est)
-        # Durante a migração dos planos legados, vínculos de fato/autoridade
-        # ainda podem vir incompletos e serão expostos pelos gates no artefato.
-        # Os defeitos que alterariam dinheiro ou estrutura, porém, nunca passam.
-        erros_fatais = [e for e in erros_do_plano if any(chave in e for chave in (
-            "request_id", "sem calculation_id", "valor_da_causa", "pedido inválido",
-        ))]
-        if erros_fatais:
-            raise ErroPeticao("PETITION_PLAN inválido: " + "; ".join(erros_fatais))
         if erros_do_plano:
-            diag.setdefault("avisos_do_plano", []).extend(erros_do_plano)
+            raise ErroPeticao("PETITION_PLAN inválido: " + "; ".join(erros_do_plano))
+        case_state_final = juridico_case_state.do_prep(prep_juridico)
+        erros_case_state = juridico_case_state.validar(case_state_final)
+        if erros_case_state:
+            raise ErroPeticao("CaseState inválido: " + "; ".join(erros_case_state))
+        for estagio, campo in (("SNAPSHOT_FACTS", "facts"), ("SNAPSHOT_ISSUES", "issues"),
+                                ("SNAPSHOT_AUTHORITIES", "authorities"), ("SNAPSHOT_CALCULATIONS", "calculations"),
+                                ("SNAPSHOT_REQUESTS", "requests")):
+            snapshots.append(juridico_case_state.snapshot(generation_id, estagio, case_state_final[campo]))
+        snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_PLAN_FINALIZED", case_state_final))
         plano_finalizado = juridico_imutabilidade.congelar(plano_est)
     else:
         plano_finalizado = None
@@ -3228,6 +3235,11 @@ Cada content deve conter parágrafos separados por linha em branco."""
         ][:3],
     }
     secoes = _normalizar_secoes(saida.get("secoes") or [], plano_est["contrato_secoes"])
+    if estrito:
+        vazamento = juridico_case_state.trace_em_prosa(secoes)
+        if vazamento:
+            raise ErroPeticao("Trace interno chegou à prosa: " + "; ".join(vazamento))
+        snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_PROSE", secoes))
     if not any(secao["content"] for secao in secoes):
         raise ErroPeticao("O modelo não devolveu texto da petição.")
     # Antes de qualquer coisa ler a peça: o que ela afirma e os autos não sustentam
@@ -3267,6 +3279,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     aprofundamento["pedidos_do_plano"] = rel_pedidos
     if plano_finalizado is not None:
         juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa="renderização dos pedidos")
+        juridico_case_state.verificar(case_state_final or {}, juridico_case_state.do_prep(prep_juridico or {}), etapa="renderização dos pedidos")
     pipeline["aprofundamento"] = {k: v for k, v in aprofundamento.items() if k != "por_topico"}
     pipeline["proveniencia_por_secao"] = aprofundamento.get("por_topico")
     avancar_etapa("Conferindo a peça contra os autos…", 85)
@@ -3312,6 +3325,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
     pipeline["case_facts"] = plano_est.get("case_facts")
     if plano_finalizado is not None:
         juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa="auditorias pré-documento")
+        juridico_case_state.verificar(case_state_final or {}, juridico_case_state.do_prep(prep_juridico or {}), etapa="auditorias pré-documento")
     # Cobertura: quais fatos e eventos que a análise dos documentos já validou
     # (o mesmo material que virou `case_brief`, acima) efetivamente aparecem no
     # texto final. Não bloqueia nem corrige nada — só torna visível quando a
@@ -3324,6 +3338,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         if prep_juridico:
             # As revisões por LLM acima podem ter tocado pedidos, valor ou data: o código os renderiza de novo.
             secoes, pipeline["renderizacao_final"] = _renderizar_juridico(secoes, prep_juridico, falhas_juridicas, diag)
+            snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_RENDER_INPUT", secoes))
     secoes, rel_final, achados_finais = _tentar_etapa(
         "validação final",
         lambda: _validar_documento_final(caso_id, secoes, plano_est, texto_do_caso, permitir_mutacoes=not estrito),
@@ -3333,6 +3348,10 @@ Cada content deve conter parágrafos separados por linha em branco."""
     violacoes = _mesclar_achados_finais(violacoes, achados_finais, secoes)
     if plano_finalizado is not None:
         juridico_imutabilidade.verificar(plano_finalizado, plano_est, etapa="validação final")
+        juridico_case_state.verificar(case_state_final or {}, juridico_case_state.do_prep(prep_juridico or {}), etapa="validação final")
+        if juridico_case_state.trace_em_prosa(secoes):
+            raise ErroPeticao("Trace interno chegou ao documento final")
+        snapshots.append(juridico_case_state.snapshot(generation_id, "SNAPSHOT_FINAL", secoes))
     pipeline["documento_final"] = rel_final
     hash_validado = documento_final.impressao_hash(secoes)
     cobertura = _tentar_etapa(
@@ -3425,7 +3444,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
             # total divergente jamais é elegível a protocolo, inclusive no fluxo
             # legado. Antes, essas falhas ficavam só em `review.findings` e a
             # prontidão podia permanecer verdadeira.
-            "ready": not (
+            "ready": estrito and not (
                 any(v.bloqueia for v in violacoes)
                 or auditoria_estrutural.pendencias(secoes)
                 or pipeline.get("documento_final", {}).get("pendencias_humanas")
@@ -3445,6 +3464,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
             ],
             "pendencias": pendencias or analise.get("fatos_so_na_entrevista") or [],
             "completo": not pendencias and not analise.get("lacunas"),
+            "mode": modo_juridico,
+            "protocolable": False,
         },
         "review": {"summary": analise.get("observacoes", "")},
         "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
@@ -3466,6 +3487,8 @@ Cada content deve conter parágrafos separados por linha em branco."""
             "outline": plano,
             "referencias_do_acervo": referencias_acervo,
             "pipeline": pipeline,
+            "case_state": case_state_final,
+            "snapshots": snapshots,
             "case_brief": brief,
             "cobertura": cobertura,
             "validacao_skill_brief": achados_validacao,
@@ -3482,6 +3505,7 @@ Cada content deve conter parágrafos separados por linha em branco."""
         _aplicar_veredito_juridico(dados, auditoria_juridica, falhas_juridicas)
     elif sombra:
         dados["trace"]["skills"].append("legal_pipeline_shadow")
+    dados["readiness"]["protocolable"] = bool(dados["readiness"].get("ready")) and estrito
     # Nada pode ter mudado o conteúdo depois do validador final (o que foi validado é o que será impresso).
     if documento_final.impressao_hash(dados["sections"]) != hash_validado:
         raise ErroPeticao("O documento mudou depois da validação final — geração interrompida para não entregar peça não validada.")
@@ -4826,6 +4850,13 @@ def salvar_secoes(
         armazenamento.registrar_versao_peticao(caso_id, anterior)
     if alterou:
         _reconferir(caso_id, dados)
+        prontidao = dados.setdefault("readiness", {})
+        prontidao["ready"] = False
+        prontidao["protocolable"] = False
+        prontidao["status"] = "IN_REVIEW"
+        prontidao.setdefault("blocking_issues", []).append(
+            "Edição manual posterior à auditoria: revalidação integral obrigatória."
+        )
     return _salvar(caso_id, dados)
 
 
