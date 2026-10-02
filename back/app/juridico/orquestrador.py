@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Callable, Iterable, Iterator
 
 from . import (auditor_certeza, auditor_secoes, auditor_semantico, auditor_temporal, auditores, autoridades as aut, calculos,
-               canonico, citacao, contrateses, fatos, plano, proposicoes, prova, raciocinio, scores, tabelas, teses)
+               canonico, citacao, contrateses, fatos, luna_pipeline, plano, proposicoes, prova, raciocinio, scores, tabelas, teses)
 from .busca import Filtros, ProvedorDeAutoridades
 
 
@@ -106,8 +106,14 @@ def analisar(
         r["itens"] = len(catalogo)
         r["arquivos"] = sorted({k["arquivo"] for k in catalogo})
     with rastro.etapa("issue_spotting", modelo=modelo) as r:
-        issues = teses.executar(_rastreado(llm, r), catalogo=catalogo, matriz=matriz, texto_matriz=fatos.para_prompt(matriz),
-                                contexto_caso=contexto_caso, estrategia_da_skill=textos_skill.get("SKILL.md", ""))
+        if luna_pipeline.ativo():
+            bruto, telemetria, skill_meta = luna_pipeline.issue_spotting_duplo(
+                _rastreado(llm, r), matriz=matriz, catalogo=catalogo, textos_skill=textos_skill)
+            issues = teses.normalizar(bruto, catalogo, matriz)
+            r["luna_pipeline_v2"] = {"telemetria": telemetria, "skill": skill_meta}
+        else:
+            issues = teses.executar(_rastreado(llm, r), catalogo=catalogo, matriz=matriz, texto_matriz=fatos.para_prompt(matriz),
+                                    contexto_caso=contexto_caso, estrategia_da_skill=textos_skill.get("SKILL.md", ""))
         r.update(teses.resumo_para_trace(issues))
     with rastro.etapa("matriz_com_fatos_chaveados") as r:
         matriz = fatos.montar(plano_est, case_facts=plano_est.get("case_facts"), fontes=fontes, fatos_extraidos=issues["fatos_extraidos"])
