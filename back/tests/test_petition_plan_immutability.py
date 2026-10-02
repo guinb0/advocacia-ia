@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.juridico import imutabilidade
+from app.juridico import plano as plano_juridico
 from app.juridico import render
 
 
@@ -61,3 +62,26 @@ def test_renderer_cannot_create_request_from_text():
     assert "REQ_001" not in texto
     assert texto.count("indenização por dano moral") == 1
     assert "R$ 50.000,00" in texto
+
+
+def test_legacy_request_is_linked_before_freeze_or_removed_with_reason():
+    class Autoridade:
+        id = "AUTH_001"
+
+    plano = _plano()
+    pedido = plano["pedidos"][0]
+    pedido.update(factual_support=[], authority_ids=[], tese_origem="T01")
+    plano["teses"] = [{"id": "T01", "titulo": "Dano moral", "pedidos_ids": ["REQ_001"]}]
+    issues = {"teses": [{"id": "I01", "tese_plano_id": "T01", "tese": "Dano moral", "decisao": plano_juridico.ts.INCLUIR,
+                          "fatos_que_suportam": ["FACT_001"], "reflexos": [], "exige_pericia": False}]}
+    plano_juridico.estruturar_pedidos(plano, issues, {"I01": [Autoridade()]})
+    assert not plano_juridico.retirar_pedidos_sem_vinculo(plano)
+    assert imutabilidade.validar(plano) == []
+
+
+def test_unlinked_legacy_monetary_request_is_removed_before_finalization():
+    plano = _plano()
+    plano["pedidos"][0].update(factual_support=[], authority_ids=[], calculation_id="")
+    pendencias = plano_juridico.retirar_pedidos_sem_vinculo(plano)
+    assert not plano["pedidos"]
+    assert "sem cálculo canônico" in pendencias[0]

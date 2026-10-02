@@ -248,6 +248,9 @@ def fundamentar(
         pendencias += retirados
         r["pedidos_retirados_sem_pressuposto"] = retirados
         plano.estruturar_pedidos(plano_novo, issues, por_tese)
+        sem_vinculo = plano.retirar_pedidos_sem_vinculo(plano_novo)
+        pendencias += sem_vinculo
+        r["pedidos_retirados_sem_vinculo"] = sem_vinculo
         r["pedidos_sem_valor"] = [p["id"] for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]
         pendencias += [f"Pedido de pagamento sem valor calculado: {p.get('title') or p['id']} — fica fora do corpo até ser calculado"
                        for p in plano_novo.get("pedidos") or [] if p.get("status") == "PENDING_CALCULATION"]

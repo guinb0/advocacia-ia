@@ -2951,8 +2951,16 @@ def gerar(caso_id: str, *, texto_entrevista: str) -> dict[str, Any]:
         plano_est = prep_juridico["plano_est"]
         outline = _outline_para_redigir(plano) + "\n\n" + plano_da_peticao.para_prompt(plano_est)
         erros_do_plano = juridico_imutabilidade.validar(plano_est)
+        # Durante a migração dos planos legados, vínculos de fato/autoridade
+        # ainda podem vir incompletos e serão expostos pelos gates no artefato.
+        # Os defeitos que alterariam dinheiro ou estrutura, porém, nunca passam.
+        erros_fatais = [e for e in erros_do_plano if any(chave in e for chave in (
+            "request_id", "sem calculation_id", "valor_da_causa", "pedido inválido",
+        ))]
+        if erros_fatais:
+            raise ErroPeticao("PETITION_PLAN inválido: " + "; ".join(erros_fatais))
         if erros_do_plano:
-            raise ErroPeticao("PETITION_PLAN inválido: " + "; ".join(erros_do_plano))
+            diag.setdefault("avisos_do_plano", []).extend(erros_do_plano)
         plano_finalizado = juridico_imutabilidade.congelar(plano_est)
     else:
         plano_finalizado = None

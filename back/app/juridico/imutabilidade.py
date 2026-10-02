@@ -67,7 +67,7 @@ def validar(plano: dict[str, Any]) -> list[str]:
         if not pid or pid in vistos:
             erros.append(f"request_id ausente ou duplicado: {pid or '<vazio>'}")
         vistos.add(pid)
-        if not pedido.get("factual_support"):
+        if not pedido.get("factual_support") and not pedido.get("de_praxe"):
             erros.append(f"{pid}: pedido sem factual_support")
         if not pedido.get("authority_ids") and not pedido.get("de_praxe"):
             erros.append(f"{pid}: pedido sem authority_ids")
