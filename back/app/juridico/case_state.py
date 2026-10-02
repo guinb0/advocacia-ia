@@ -72,9 +72,14 @@ def congelar(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def verificar(snapshot: dict[str, Any], state: dict[str, Any], *, etapa: str) -> None:
+    # O CaseState completo também carrega `internal_trace` e `prose_sections`,
+    # que deliberadamente não são congelados. Comparar o snapshot bruto com a
+    # projeção congelada fazia qualquer renderização parecer mutação, embora os
+    # sete campos jurídicos permanecessem idênticos.
+    esperado = congelar(snapshot)
     atual = congelar(state)
-    if atual != snapshot:
-        campos = [c for c in _CAMPOS_CONGELADOS if snapshot.get(c) != atual.get(c)]
+    if atual != esperado:
+        campos = [c for c in _CAMPOS_CONGELADOS if esperado.get(c) != atual.get(c)]
         raise MutacaoDoCaseState(f"CaseState finalizado foi alterado em {etapa}: {', '.join(campos)}")
 
 
